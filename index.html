@@ -147,10 +147,13 @@
     table.bench th, table.bench td{padding:7px 6px;}
     .frame-controls .btn{flex:1 1 auto;}
     #targetFrame.is-active{height:60vh; resize:none;}
-    .custom-form input[type=text], .custom-form textarea, select{
+    .custom-form input[type=text], .custom-form textarea, select,
+    .repo-form input[type=text]{
       font-size:16px; /* stops iOS Safari auto-zooming the page on focus */
       padding:10px;
     }
+    .repo-row{flex-wrap:wrap;}
+    .repo-row #repoLoadBtn{flex:1 1 100%;}
     footer.note{padding:12px 14px 16px; font-size:10px;}
   }
   .panel{
@@ -238,6 +241,25 @@
   .frame-controls{display:flex; align-items:center; gap:8px; margin-top:10px; flex-wrap:wrap;}
   .frame-controls[hidden]{display:none;}
   .frame-controls .hint{font-size:10.5px; color:var(--text-faint);}
+
+  /* ---------- Target file / repo loader ---------- */
+  .divider-or{
+    display:flex; align-items:center; gap:8px; margin:12px 0;
+    font-size:10px; letter-spacing:.08em; text-transform:uppercase; color:var(--text-faint);
+  }
+  .divider-or::before, .divider-or::after{content:''; flex:1; height:1px; background:var(--line);}
+  .repo-form{display:flex; flex-direction:column; gap:8px;}
+  .repo-form input[type=text]{
+    background:var(--bg-2); border:1px solid var(--line); color:var(--text);
+    border-radius:var(--radius); padding:8px; font-size:11.5px; width:100%;
+  }
+  .repo-row{display:flex; gap:8px;}
+  .repo-row input{flex:1; min-width:0;}
+  .repo-status{font-size:11px; color:var(--text-dim); min-height:14px;}
+  .repo-status.err{color:var(--red);}
+  .repo-candidates{display:flex; flex-wrap:wrap; gap:6px; max-height:160px; overflow-y:auto; padding:2px;}
+  .repo-candidates[hidden]{display:none;}
+  .repo-candidates .btn{font-family:var(--font-m); text-transform:none; letter-spacing:0;}
 
   /* ---------- Process bench ---------- */
   #benchPanel{grid-area:bench;}
@@ -382,7 +404,19 @@
         <div class="dz-text">Drag &amp; drop an <b>.html</b> file here, or <span class="dz-browse">browse</span></div>
         <input type="file" id="targetFileInput" accept=".html,.htm" hidden>
       </div>
-      <div class="target-status" id="targetStatus">No file loaded. Drop an .html file and it's auto-instrumented: every <code>setInterval</code>/<code>setTimeout</code>/<code>requestAnimationFrame</code> callback and DOM event listener is timed automatically, plus any top-level function it defines. Page-load timing (paint, long tasks, layout shift) is also picked up with no changes needed.</div>
+
+      <div class="divider-or">or measure a public repo</div>
+      <div class="repo-form" id="repoForm">
+        <div class="repo-row">
+          <input type="text" id="repoInput" placeholder="owner/repo or a github.com URL" autocomplete="off" spellcheck="false" autocapitalize="off">
+          <button class="btn small" id="repoLoadBtn" type="button">Load repo</button>
+        </div>
+        <input type="text" id="repoPathInput" placeholder="entry file path (optional — auto-detected)" autocomplete="off" spellcheck="false" autocapitalize="off">
+        <div class="repo-status" id="repoStatus"></div>
+        <div class="repo-candidates" id="repoCandidates" hidden></div>
+      </div>
+
+      <div class="target-status" id="targetStatus">No file loaded. Drop an .html file, or point at a public GitHub repo above, and it's auto-instrumented: every <code>setInterval</code>/<code>setTimeout</code>/<code>requestAnimationFrame</code> callback and DOM event listener is timed automatically, plus any top-level function it defines. Page-load timing (paint, long tasks, layout shift) is also picked up with no changes needed. For a repo, the entry HTML's relative <code>&lt;script&gt;</code>/<code>&lt;link&gt;</code>/<code>&lt;img&gt;</code> references are rewritten to load straight from <code>cdn.jsdelivr.net</code>, so its real CSS/JS/assets load too — only that one HTML document's own top-level functions get auto-wrapped, though.</div>
       <div class="target-readout" id="targetReadout"></div>
       <div class="frame-controls" id="frameControls" hidden>
         <span class="hint">preview height</span>
@@ -1462,6 +1496,62 @@
     targetFileInput.value = '';
   });
 
+  // Shared activation path for any HTML document text we've obtained,
+  // whether from a locally dropped file or a fetched GitHub repo entry
+  // point. `label` is a display name only (used in status text and logs);
+  // it does not need to be a real filename.
+  function activateTarget(html, label){
+    targetState.fileName = label;
+    targetState.loaded = false;
+    targetState.autoWrappedGlobals = 0;
+    targetState.longTasks = [];
+    targetState.fcp = null; targetState.lcp = null; targetState.cls = 0;
+    targetStatusEl.textContent = 'Loading "'+label+'"…';
+    targetReadoutEl.innerHTML = '';
+    // srcdoc keeps the iframe same-origin with this page, so we can reach
+    // into it (contentWindow) once it loads. injectShim() splices our
+    // instrumentation script in before the document's own code runs.
+    targetFrame.srcdoc = injectShim(html);
+    // Fallback: some browsers/edge-cases don't fire 'load' a second time
+    // when srcdoc is reassigned rapidly. Poll readyState as a backstop.
+    let pollTries = 0;
+    let lastReadyState = null;
+    let lastDoc = null;
+    const poll = setInterval(()=>{
+      pollTries++;
+      if(targetState.loaded){ clearInterval(poll); return; }
+      if(pollTries>40){ // ~10s
+        clearInterval(poll);
+        if(lastReadyState === 'interactive' && lastDoc){
+          // DOM parsed and its own scripts already ran — only a
+          // sub-resource (image/script/stylesheet/iframe) is still
+          // pending. That shouldn't block you from using/measuring the
+          // page, so proceed rather than hang indefinitely.
+          const suspects = findUnresolvableRefs(lastDoc);
+          if(suspects.length){
+            pushLog('warning', '"'+label+'" never reached readyState "complete" — likely because it references something this tool couldn\'t resolve: '+suspects.slice(0,4).join(', ')+(suspects.length>4?', +'+(suspects.length-4)+' more':'')+'. Proceeding anyway since the page itself finished parsing and running.');
+          } else {
+            pushLog('warning', '"'+label+'" never reached readyState "complete" (stuck at "interactive") — some sub-resource is still pending, but no obvious unresolved reference was found. Proceeding anyway since the page itself finished parsing and running; check the Network tab in devtools (iframe context) if you want to find the pending request.');
+          }
+          targetFrame.dispatchEvent(new Event('load'));
+        } else {
+          pushLog('warning', '"'+label+'" did not report a load event (last readyState: '+(lastReadyState||'unknown, contentDocument inaccessible')+'). Check the browser devtools console with the iframe context selected for errors in that file.');
+        }
+        return;
+      }
+      try{
+        const doc = targetFrame.contentDocument;
+        lastReadyState = doc ? doc.readyState : null;
+        lastDoc = doc || lastDoc;
+        if(doc && doc.readyState === 'complete' && !targetState.loaded){
+          targetFrame.dispatchEvent(new Event('load'));
+        }
+      }catch(e){
+        lastReadyState = 'blocked: '+e.message;
+      }
+    }, 250);
+  }
+
   function loadTargetFile(file){
     if(!/\.html?$/i.test(file.name)){
       targetStatusEl.textContent = 'Only .html/.htm files are supported (got "'+file.name+'").';
@@ -1470,63 +1560,242 @@
     }
     pushLog('info', 'Reading "'+file.name+'" ('+Math.round(file.size/1024)+' KB)…');
     const reader = new FileReader();
-    reader.onload = ()=>{
-      targetState.fileName = file.name;
-      targetState.loaded = false;
-      targetState.autoWrappedGlobals = 0;
-      targetState.longTasks = [];
-      targetState.fcp = null; targetState.lcp = null; targetState.cls = 0;
-      targetStatusEl.textContent = 'Loading "'+file.name+'"…';
-      targetReadoutEl.innerHTML = '';
-      // srcdoc keeps the iframe same-origin with this page, so we can reach
-      // into it (contentWindow) once it loads. injectShim() splices our
-      // instrumentation script in before the file's own code runs.
-      targetFrame.srcdoc = injectShim(reader.result);
-      // Fallback: some browsers/edge-cases don't fire 'load' a second time
-      // when srcdoc is reassigned rapidly. Poll readyState as a backstop.
-      let pollTries = 0;
-      let lastReadyState = null;
-      let lastDoc = null;
-      const poll = setInterval(()=>{
-        pollTries++;
-        if(targetState.loaded){ clearInterval(poll); return; }
-        if(pollTries>40){ // ~10s
-          clearInterval(poll);
-          if(lastReadyState === 'interactive' && lastDoc){
-            // DOM parsed and its own scripts already ran — only a
-            // sub-resource (image/script/stylesheet/iframe) is still
-            // pending. That shouldn't block you from using/measuring the
-            // page, so proceed rather than hang indefinitely.
-            const suspects = findUnresolvableRefs(lastDoc);
-            if(suspects.length){
-              pushLog('warning', '"'+file.name+'" never reached readyState "complete" — likely because it references a local file this tool can\'t see (only the dropped file\'s own text is available, not its folder): '+suspects.slice(0,4).join(', ')+(suspects.length>4?', +'+(suspects.length-4)+' more':'')+'. Proceeding anyway since the page itself finished parsing and running.');
-            } else {
-              pushLog('warning', '"'+file.name+'" never reached readyState "complete" (stuck at "interactive") — some sub-resource is still pending, but no obvious local/relative reference was found. Proceeding anyway since the page itself finished parsing and running; check the Network tab in devtools (iframe context) if you want to find the pending request.');
-            }
-            targetFrame.dispatchEvent(new Event('load'));
-          } else {
-            pushLog('warning', '"'+file.name+'" did not report a load event (last readyState: '+(lastReadyState||'unknown, contentDocument inaccessible')+'). Check the browser devtools console with the iframe context selected for errors in that file.');
-          }
-          return;
-        }
-        try{
-          const doc = targetFrame.contentDocument;
-          lastReadyState = doc ? doc.readyState : null;
-          lastDoc = doc || lastDoc;
-          if(doc && doc.readyState === 'complete' && !targetState.loaded){
-            targetFrame.dispatchEvent(new Event('load'));
-          }
-        }catch(e){
-          lastReadyState = 'blocked: '+e.message;
-        }
-      }, 250);
-    };
+    reader.onload = ()=> activateTarget(reader.result, file.name);
     reader.onerror = ()=>{
       targetStatusEl.textContent = 'Could not read that file.';
       pushLog('critical', 'FileReader failed on "'+file.name+'": '+(reader.error && reader.error.message||'unknown error'));
     };
     reader.readAsText(file);
   }
+
+  /* ---------- GitHub repo loader ---------- */
+  const repoInputEl = document.getElementById('repoInput');
+  const repoPathInputEl = document.getElementById('repoPathInput');
+  const repoLoadBtn = document.getElementById('repoLoadBtn');
+  const repoStatusEl = document.getElementById('repoStatus');
+  const repoCandidatesEl = document.getElementById('repoCandidates');
+
+  // Accepts a github.com URL (repo root, /tree/<branch>/<dir>, or
+  // /blob/<branch>/<file>) or a plain "owner/repo", "owner/repo@branch",
+  // or "owner/repo/some/path" shorthand.
+  function parseRepoInput(raw){
+    raw = (raw||'').trim();
+    if(!raw) return null;
+    let m = raw.match(/^(?:https?:\/\/)?(?:www\.)?github\.com\/([^\/\s]+)\/([^\/\s]+?)(?:\.git)?(?:\/(blob|tree)\/([^\/]+))?\/?$/i);
+    if(m){
+      let branch = null, path = null;
+      if(m[4]){
+        // Everything after owner/repo/blob|tree/ is "<branch>/<path...>" —
+        // branch names can contain slashes, and we can't tell where the
+        // branch ends without calling the API, so split on the first
+        // segment and let the caller fall back to a tree search if a
+        // direct fetch on that first segment as the branch 404s.
+        const rest = m[4].split('/');
+        branch = rest.shift();
+        path = rest.length ? decodeURIComponent(rest.join('/')) : null;
+      }
+      return { owner:m[1], repo:m[2].replace(/\.git$/,''), branch, path, isTree: m[3]==='tree' };
+    }
+    m = raw.match(/^([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+?)(?:\.git)?(?:@([^\/\s]+))?(?:\/(.+))?$/);
+    if(m){
+      return { owner:m[1], repo:m[2], branch:m[3]||null, path:m[4]||null, isTree:false };
+    }
+    return null;
+  }
+
+  async function fetchJSON(url){
+    let res;
+    try{ res = await fetch(url, {headers:{'Accept':'application/vnd.github+json'}}); }
+    catch(e){ throw new Error('network request failed (offline, or blocked by an extension/network policy)'); }
+    if(!res.ok){
+      if(res.status===403){
+        if(res.headers.get('x-ratelimit-remaining')==='0') throw new Error('GitHub API rate limit hit (60 unauthenticated requests/hour, shared by everyone on this network) — wait a bit and try again');
+        throw new Error('GitHub API returned 403 (repo may be private — only public repos work here)');
+      }
+      if(res.status===404) throw new Error('not found — check the owner/repo/branch/path (private repos aren\'t accessible without auth, which this tool doesn\'t do)');
+      throw new Error('GitHub API returned HTTP '+res.status);
+    }
+    return res.json();
+  }
+
+  // Rewrites every relative resource reference (script/link/img/media/etc,
+  // including srcset and CSS url()) in `html` to an absolute URL resolved
+  // against `baseUrl`. `baseUrl` points at jsDelivr's GitHub CDN rather than
+  // raw.githubusercontent.com: raw.githubusercontent.com serves every file
+  // as `text/plain` with `X-Content-Type-Options: nosniff`, which makes
+  // browsers silently refuse to apply <link>-loaded stylesheets (and can
+  // block module scripts) — the repo's other files fetch fine, they just
+  // don't take effect, so the page looks like a bare index.html. jsDelivr
+  // mirrors the same repo content but with correct per-file MIME types and
+  // no nosniff block, and it too sends Access-Control-Allow-Origin:*, so
+  // the rewritten document can still load its real CSS/JS/images with no
+  // proxy or virtual filesystem needed — and any further relative
+  // references *inside* those fetched files (e.g. a stylesheet's own url()
+  // calls, or a JS module's relative imports) resolve correctly on their
+  // own, since the browser resolves those against the fetched file's own
+  // URL, not the page's.
+  function rewriteRelativeRefs(html, baseUrl){
+    const isSkippable = (url)=> !url || /^([a-z][a-z0-9+.-]*:)?\/\//i.test(url) || /^(data|about|mailto|javascript):/i.test(url) || /^#/.test(url);
+    const resolve = (url)=>{ try{ return new URL(url, baseUrl).href; }catch(e){ return url; } };
+    try{
+      const doc = new DOMParser().parseFromString(html, 'text/html');
+      const head = doc.head || doc.documentElement;
+      // <base> makes every *remaining* relative reference in the document
+      // resolve against the repo folder automatically — including ones our
+      // attribute list below doesn't know about (SVG <use href="sprite.svg#x">,
+      // CSS @import "file.css") and, crucially, ones that don't exist yet at
+      // parse time: a script calling new Audio('sfx/click.mp3'), fetch('data.json'),
+      // or creating elements and setting .src at runtime. Those can't be
+      // caught by rewriting attributes in the static markup, since nothing is
+      // there to rewrite yet. Only added if the file doesn't already declare
+      // its own <base> (a document's first <base> wins, and we don't want to
+      // silently override one it set intentionally).
+      if(!doc.querySelector('base')){
+        const baseEl = doc.createElement('base');
+        baseEl.setAttribute('href', baseUrl);
+        head.insertBefore(baseEl, head.firstChild);
+      }
+      [['script[src]','src'], ['link[href]','href'], ['img[src]','src'],
+       ['source[src]','src'], ['audio[src]','src'], ['video[src]','src'],
+       ['video[poster]','poster'], ['object[data]','data'], ['embed[src]','src'],
+       ['iframe[src]','src'], ['track[src]','src']].forEach(([sel, attr])=>{
+        doc.querySelectorAll(sel).forEach(el=>{
+          const v = el.getAttribute(attr);
+          if(v && !isSkippable(v)) el.setAttribute(attr, resolve(v));
+        });
+      });
+      // SVG <use> sprite refs: modern markup uses plain href, older/Safari
+      // markup uses the xlink:href form — check both, since a given file
+      // might use either.
+      doc.querySelectorAll('use').forEach(el=>{
+        ['href','xlink:href'].forEach(attr=>{
+          const v = el.getAttribute(attr);
+          if(v && !isSkippable(v)) el.setAttribute(attr, resolve(v));
+        });
+      });
+      doc.querySelectorAll('img[srcset],source[srcset]').forEach(el=>{
+        const v = el.getAttribute('srcset');
+        if(!v) return;
+        el.setAttribute('srcset', v.split(',').map(part=>{
+          const bits = part.trim().split(/\s+/);
+          if(bits[0] && !isSkippable(bits[0])) bits[0] = resolve(bits[0]);
+          return bits.join(' ');
+        }).join(', '));
+      });
+      const rewriteCssUrls = (css)=> css
+        .replace(/url\(\s*(['"]?)([^'")]+)\1\s*\)/gi, (m,q,u)=> isSkippable(u) ? m : 'url('+q+resolve(u)+q+')')
+        .replace(/@import\s+(['"])([^'"]+)\1/gi, (m,q,u)=> isSkippable(u) ? m : '@import '+q+resolve(u)+q);
+      doc.querySelectorAll('[style]').forEach(el=>{
+        const v = el.getAttribute('style');
+        if(v && /url\(/i.test(v)) el.setAttribute('style', rewriteCssUrls(v));
+      });
+      doc.querySelectorAll('style').forEach(el=>{
+        if(el.textContent && /url\(/i.test(el.textContent)) el.textContent = rewriteCssUrls(el.textContent);
+      });
+      return '<!DOCTYPE html>\n' + doc.documentElement.outerHTML;
+    }catch(e){
+      pushLog('warning', 'Could not rewrite relative resource references ('+e.message+') — loading the file as-is; its CSS/JS/image references will likely fail to resolve.');
+      return html;
+    }
+  }
+
+  async function loadRepoEntry(owner, repo, branch, path){
+    // jsDelivr's GitHub CDN: https://cdn.jsdelivr.net/gh/OWNER/REPO@BRANCH/PATH
+    // Used instead of raw.githubusercontent.com because raw serves every
+    // file as text/plain with X-Content-Type-Options: nosniff, which makes
+    // browsers silently refuse to apply <link>-loaded CSS (and can block
+    // module scripts) — see the comment on rewriteRelativeRefs above.
+    const branchPart = encodeURIComponent(branch);
+    const pathPart = path.split('/').map(encodeURIComponent).join('/');
+    const dirPart = path.indexOf('/')>-1 ? path.split('/').slice(0,-1).map(encodeURIComponent).join('/')+'/' : '';
+    const dirUrl = 'https://cdn.jsdelivr.net/gh/'+owner+'/'+repo+'@'+branchPart+'/'+dirPart;
+    const rawUrl = 'https://cdn.jsdelivr.net/gh/'+owner+'/'+repo+'@'+branchPart+'/'+pathPart;
+    repoStatusEl.classList.remove('err');
+    repoStatusEl.textContent = 'Fetching '+path+'…';
+    let res;
+    try{ res = await fetch(rawUrl); }
+    catch(e){ throw new Error('network request for "'+path+'" failed'); }
+    if(!res.ok) throw new Error('could not fetch "'+path+'" (HTTP '+res.status+') — note jsDelivr can take a few minutes to pick up a brand-new repo or a very recent commit');
+    const html = await res.text();
+    const label = owner+'/'+repo+' — '+path+' @ '+branch;
+    const rewritten = rewriteRelativeRefs(html, dirUrl);
+    pushLog('info', 'Fetched "'+path+'" from '+owner+'/'+repo+'@'+branch+' ('+Math.round(html.length/1024)+' KB) — relative script/link/img/media references rewritten to load from cdn.jsdelivr.net (correct MIME types, unlike raw.githubusercontent.com).');
+    repoStatusEl.textContent = 'Loaded '+label+'.';
+    activateTarget(rewritten, label);
+  }
+
+  async function loadFromRepo(){
+    const parsed = parseRepoInput(repoInputEl.value);
+    repoCandidatesEl.hidden = true;
+    repoCandidatesEl.innerHTML = '';
+    repoStatusEl.classList.remove('err');
+    if(!parsed){
+      repoStatusEl.classList.add('err');
+      repoStatusEl.textContent = 'Could not parse that — try "owner/repo" or a github.com URL.';
+      return;
+    }
+    const explicitPath = repoPathInputEl.value.trim().replace(/^\/+/,'');
+    repoLoadBtn.disabled = true;
+    try{
+      repoStatusEl.textContent = 'Resolving '+parsed.owner+'/'+parsed.repo+'…';
+      let branch = parsed.branch;
+      if(!branch){
+        const info = await fetchJSON('https://api.github.com/repos/'+parsed.owner+'/'+parsed.repo);
+        branch = info.default_branch;
+      }
+      const path = explicitPath || parsed.path;
+      if(path && !parsed.isTree && /\.html?$/i.test(path)){
+        await loadRepoEntry(parsed.owner, parsed.repo, branch, path);
+        return;
+      }
+      repoStatusEl.textContent = 'Listing files in '+parsed.owner+'/'+parsed.repo+'@'+branch+'…';
+      const tree = await fetchJSON('https://api.github.com/repos/'+parsed.owner+'/'+parsed.repo+'/git/trees/'+encodeURIComponent(branch)+'?recursive=1');
+      if(tree.truncated) pushLog('warning', 'GitHub truncated the file listing for this repo (it\'s very large) — some HTML files may not show up below.');
+      let candidates = (tree.tree||[]).filter(t=>t.type==='blob' && /\.html?$/i.test(t.path));
+      if(path){
+        const dir = path.replace(/\/$/,'')+'/';
+        candidates = candidates.filter(c=> c.path===path || c.path.indexOf(dir)===0);
+      }
+      if(!candidates.length){
+        repoStatusEl.classList.add('err');
+        repoStatusEl.textContent = 'No .html files found in '+parsed.owner+'/'+parsed.repo+(path?(' under "'+path+'"'):'')+'.';
+        pushLog('warning', 'Repo scan for '+parsed.owner+'/'+parsed.repo+' found no HTML entry point.');
+        return;
+      }
+      const rootIndex = candidates.find(c=>c.path.toLowerCase()==='index.html');
+      if(candidates.length===1){
+        await loadRepoEntry(parsed.owner, parsed.repo, branch, candidates[0].path);
+      } else if(rootIndex && !explicitPath){
+        await loadRepoEntry(parsed.owner, parsed.repo, branch, rootIndex.path);
+      } else {
+        candidates.sort((a,b)=> a.path.split('/').length - b.path.split('/').length || a.path.localeCompare(b.path));
+        repoStatusEl.textContent = 'Found '+candidates.length+' HTML file(s) — pick an entry point:';
+        repoCandidatesEl.hidden = false;
+        repoCandidatesEl.innerHTML = candidates.slice(0,80).map((c,i)=>
+          '<button type="button" class="btn small ghost" data-idx="'+i+'">'+c.path+'</button>'
+        ).join('');
+        repoCandidatesEl.querySelectorAll('button').forEach((btn,i)=>{
+          btn.addEventListener('click', async ()=>{
+            repoCandidatesEl.hidden = true;
+            repoLoadBtn.disabled = true;
+            try{ await loadRepoEntry(parsed.owner, parsed.repo, branch, candidates[i].path); }
+            catch(e){ repoStatusEl.classList.add('err'); repoStatusEl.textContent = 'Could not load "'+candidates[i].path+'": '+e.message; pushLog('critical', 'GitHub repo entry load failed: '+e.message); }
+            finally{ repoLoadBtn.disabled = false; }
+          });
+        });
+      }
+    }catch(e){
+      repoStatusEl.classList.add('err');
+      repoStatusEl.textContent = 'Could not load that repo: '+e.message;
+      pushLog('critical', 'GitHub repo load failed: '+e.message);
+    }finally{
+      repoLoadBtn.disabled = false;
+    }
+  }
+
+  repoLoadBtn.addEventListener('click', loadFromRepo);
+  repoInputEl.addEventListener('keydown', e=>{ if(e.key==='Enter') loadFromRepo(); });
+  repoPathInputEl.addEventListener('keydown', e=>{ if(e.key==='Enter') loadFromRepo(); });
 
   targetFrame.addEventListener('load', ()=>{
     if(!targetState.fileName) return; // ignore the iframe's initial blank load
