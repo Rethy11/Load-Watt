@@ -1,0 +1,1640 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Instrument Panel — Page Load &amp; Power Diagnostics</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Barlow+Condensed:wght@500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0a0f0c;
+    --bg-2:#070a08;
+    --panel:#0f1613;
+    --panel-2:#121a16;
+    --bezel:#1b2621;
+    --line:#25332c;
+    --line-soft:#1a2420;
+    --text:#cfe0d4;
+    --text-dim:#84998c;
+    --text-faint:#4d5f55;
+    --accent:#5dffa0;
+    --accent-dim:#2c7a53;
+    --accent-glow:rgba(93,255,160,.5);
+    --amber:#ffb454;
+    --amber-glow:rgba(255,180,84,.5);
+    --red:#ff5c5c;
+    --red-glow:rgba(255,92,92,.5);
+    --cyan:#5ecdfa;
+    --violet:#c792ff;
+    --font-d:'Barlow Condensed', sans-serif;
+    --font-m:'JetBrains Mono', monospace;
+    --radius:3px;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    background:
+      radial-gradient(1200px 700px at 10% -10%, #0e1512 0%, transparent 60%),
+      var(--bg-2);
+    color:var(--text);
+    font-family:var(--font-m);
+    font-size:13px;
+    line-height:1.5;
+    padding:18px;
+    min-height:100vh;
+  }
+  ::selection{background:var(--accent-dim);color:#04120a;}
+  a{color:var(--cyan);}
+  button, input, textarea, select{font-family:inherit;}
+  button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible{
+    outline:2px solid var(--accent); outline-offset:1px;
+  }
+
+  .instrument{
+    max-width:1180px;
+    margin:0 auto;
+    background:var(--bg);
+    border:1px solid var(--line);
+    border-radius:6px;
+    box-shadow:0 0 0 1px #000, 0 30px 80px -30px rgba(0,0,0,.8), inset 0 1px 0 rgba(255,255,255,.02);
+    position:relative;
+  }
+  .instrument::before, .instrument::after,
+  .rivets span{
+    content:'';
+  }
+  .rivets{position:absolute; inset:0; pointer-events:none;}
+  .rivets span{
+    position:absolute; width:5px; height:5px; border-radius:50%;
+    background:radial-gradient(circle at 35% 30%, #3a4a41, #0c1310 70%);
+    box-shadow:0 0 0 1px #000;
+  }
+  .rivets span:nth-child(1){top:9px; left:9px;}
+  .rivets span:nth-child(2){top:9px; right:9px;}
+  .rivets span:nth-child(3){bottom:9px; left:9px;}
+  .rivets span:nth-child(4){bottom:9px; right:9px;}
+
+  /* ---------- Topbar ---------- */
+  .topbar{
+    display:flex; align-items:center; justify-content:space-between; gap:14px;
+    padding:16px 22px; border-bottom:1px solid var(--line);
+    flex-wrap:wrap;
+  }
+  .brand{display:flex; align-items:baseline; gap:10px;}
+  .brand .mark{
+    font-family:var(--font-d); font-weight:700; letter-spacing:.06em;
+    font-size:22px; color:var(--text); text-transform:uppercase;
+  }
+  .brand .mark em{font-style:normal; color:var(--accent);}
+  .brand .sub{color:var(--text-faint); font-size:11px; letter-spacing:.04em;}
+  .controls{display:flex; align-items:center; gap:10px; flex-wrap:wrap;}
+  .status-chip{
+    display:flex; align-items:center; gap:7px;
+    border:1px solid var(--line); border-radius:20px; padding:5px 12px 5px 9px;
+    font-size:11px; color:var(--text-dim); letter-spacing:.03em;
+  }
+  .led{width:7px; height:7px; border-radius:50%; background:var(--text-faint); box-shadow:none; flex:none;}
+  .led.on{background:var(--red); box-shadow:0 0 8px 1px var(--red-glow);}
+  .led.on.rec-pulse{animation:pulse 1.4s ease-in-out infinite;}
+  @keyframes pulse{0%,100%{opacity:1;}50%{opacity:.35;}}
+  @media (prefers-reduced-motion: reduce){ .led.on.rec-pulse{animation:none;} }
+
+  .btn{
+    appearance:none; border:1px solid var(--line); background:var(--panel-2);
+    color:var(--text); padding:8px 14px; border-radius:var(--radius);
+    font-family:var(--font-m); font-size:11.5px; letter-spacing:.04em; text-transform:uppercase;
+    cursor:pointer; transition:border-color .15s, color .15s, background .15s;
+  }
+  .btn:hover{border-color:var(--accent-dim); color:var(--accent);}
+  .btn:active{transform:translateY(1px);}
+  .btn.primary{background:var(--accent-dim); border-color:var(--accent-dim); color:#04140b; font-weight:700;}
+  .btn.primary:hover{border-color:var(--accent); background:var(--accent);}
+  .btn.stop{background:#3a1414; border-color:#5a1f1f; color:#ffb9b9;}
+  .btn.stop:hover{border-color:var(--red); color:#fff;}
+  .btn.ghost{background:transparent;}
+  .btn.small{padding:5px 9px; font-size:10.5px;}
+  .btn:disabled{opacity:.35; cursor:not-allowed;}
+  .btn:disabled:hover{border-color:var(--line); color:var(--text);}
+
+  /* ---------- Layout ---------- */
+  .grid{
+    display:grid;
+    grid-template-columns: minmax(0,340px) minmax(0,1fr);
+    grid-template-areas:
+      "target target"
+      "gauges channels"
+      "readouts readouts"
+      "bench bench"
+      "log recs";
+    gap:14px;
+    padding:16px;
+    min-width:0;
+  }
+  .grid > *{min-width:0;}
+  @media (max-width: 900px){
+    .grid{grid-template-columns:minmax(0,1fr); grid-template-areas:"target" "gauges" "channels" "readouts" "bench" "log" "recs";}
+  }
+
+  .panel{padding:12px 13px;}
+    .panel-head h2{font-size:13px;}
+    .dropzone{padding:26px 14px;}
+    .dz-text{font-size:13px;}
+    .preset{min-width:100%; flex:1 1 100%;}
+    .preset .prow .btn{flex:1 1 auto;}
+    .readout-row{grid-template-columns:repeat(auto-fit, minmax(96px,1fr));}
+    table.bench{min-width:0; font-size:11px;}
+    table.bench th, table.bench td{padding:7px 6px;}
+    .frame-controls .btn{flex:1 1 auto;}
+    #targetFrame.is-active{height:60vh; resize:none;}
+    .custom-form input[type=text], .custom-form textarea, select{
+      font-size:16px; /* stops iOS Safari auto-zooming the page on focus */
+      padding:10px;
+    }
+    footer.note{padding:12px 14px 16px; font-size:10px;}
+  }
+  .panel{
+    background:linear-gradient(180deg, var(--panel), var(--panel-2));
+    border:1px solid var(--line); border-radius:var(--radius);
+    padding:14px 16px;
+  }
+  .panel-head{
+    display:flex; align-items:center; justify-content:space-between;
+    margin-bottom:10px; padding-bottom:8px; border-bottom:1px dashed var(--line);
+  }
+  .panel-head h2{
+    margin:0; font-family:var(--font-d); font-weight:600; text-transform:uppercase;
+    letter-spacing:.08em; font-size:14px; color:var(--text-dim);
+  }
+  .panel-head .hint{font-size:10.5px; color:var(--text-faint);}
+
+  /* ---------- Gauges ---------- */
+  #gaugesPanel{grid-area:gauges;}
+  .gauge-block{margin-bottom:16px;}
+  .gauge-block:last-child{margin-bottom:0;}
+  .gauge-label{
+    display:flex; justify-content:space-between; align-items:baseline;
+    font-family:var(--font-d); text-transform:uppercase; letter-spacing:.06em;
+    font-size:12px; color:var(--text-dim); margin-bottom:2px;
+  }
+  .gauge-label .val{font-family:var(--font-m); font-size:20px; font-weight:700; color:var(--text);}
+  .gauge-label .val .unit{font-size:11px; color:var(--text-faint); font-weight:400;}
+  canvas.gauge{width:100%; height:104px; display:block;}
+  .gauge-tag{font-size:10px; color:var(--text-faint); text-align:center; margin-top:2px; letter-spacing:.05em;}
+  .gauge-tag.good{color:var(--accent);}
+  .gauge-tag.warn{color:var(--amber);}
+  .gauge-tag.crit{color:var(--red);}
+
+  /* ---------- Channels ---------- */
+  #channelsPanel{grid-area:channels;}
+  .channel{border-top:1px solid var(--line-soft); padding:9px 0;}
+  .channel:first-child{border-top:none; padding-top:0;}
+  .channel-head{display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;}
+  .channel-head .ch-name{font-size:11px; color:var(--text-dim); letter-spacing:.04em;}
+  .channel-head .ch-name b{color:var(--text); font-weight:600;}
+  .channel-head .ch-val{font-size:12px; color:var(--text);}
+  .channel-head .ch-val .na{color:var(--text-faint); font-style:normal;}
+  canvas.strip{width:100%; height:52px; display:block; background:
+    repeating-linear-gradient(180deg, transparent, transparent 12px, var(--line-soft) 13px);
+    border-radius:2px;
+  }
+
+  /* ---------- Readouts ---------- */
+  #readoutsPanel{grid-area:readouts;}
+  .readout-row{display:grid; grid-template-columns:repeat(auto-fit, minmax(108px,1fr)); gap:10px;}
+  .readout{
+    background:var(--bg-2); border:1px solid var(--line-soft); border-radius:var(--radius);
+    padding:9px 10px;
+  }
+  .readout .rl{font-size:10px; color:var(--text-faint); text-transform:uppercase; letter-spacing:.06em;}
+  .readout .rv{font-size:17px; color:var(--text); margin-top:3px; font-weight:600;}
+  .readout .rv small{font-size:10px; color:var(--text-faint); font-weight:400;}
+  .readout.warn .rv{color:var(--amber);}
+  .readout.crit .rv{color:var(--red);}
+
+  /* ---------- Target file / dropzone ---------- */
+  #targetPanel{grid-area:target;}
+  .dropzone{
+    border:1px dashed var(--line); border-radius:var(--radius);
+    padding:22px 16px; text-align:center; cursor:pointer;
+    transition:border-color .15s, background .15s;
+    color:var(--text-dim);
+  }
+  .dropzone:hover{border-color:var(--accent-dim);}
+  .dropzone.dragover{border-color:var(--accent); background:rgba(93,255,160,.05); color:var(--text);}
+  .dz-icon{font-size:20px; color:var(--text-faint); margin-bottom:4px;}
+  .dz-text{font-size:12px;}
+  .dz-browse{color:var(--cyan); text-decoration:underline; cursor:pointer;}
+  .target-status{font-size:11.5px; color:var(--text-dim); margin-top:10px;}
+  .target-status code{color:var(--accent); font-size:11px;}
+  .target-readout{margin-top:10px;}
+  .target-readout:empty{margin-top:0;}
+  #targetFrame{width:100%; height:0; border:0; display:block;}
+  #targetFrame.is-active{
+    height:480px; min-height:220px; max-height:80vh;
+    margin-top:10px; border:1px solid var(--line); border-radius:2px;
+    resize:vertical; overflow:auto; background:#fff;
+  }
+  .frame-controls{display:flex; align-items:center; gap:8px; margin-top:10px; flex-wrap:wrap;}
+  .frame-controls[hidden]{display:none;}
+  .frame-controls .hint{font-size:10.5px; color:var(--text-faint);}
+
+  /* ---------- Process bench ---------- */
+  #benchPanel{grid-area:bench;}
+  .preset-row{display:flex; flex-wrap:wrap; gap:8px; margin-bottom:12px;}
+  .preset{
+    border:1px solid var(--line); background:var(--bg-2); border-radius:var(--radius);
+    padding:8px 10px; min-width:150px; flex:1 1 150px;
+  }
+  .preset .pname{font-size:11.5px; color:var(--text); font-weight:600;}
+  .preset .pdesc{font-size:10px; color:var(--text-faint); margin:3px 0 7px; line-height:1.4;}
+  .preset .prow{display:flex; gap:6px; flex-wrap:wrap;}
+
+  .bench-scroll{overflow-x:auto; -webkit-overflow-scrolling:touch;}
+  table.bench{width:100%; min-width:520px; border-collapse:collapse; font-size:11.5px; table-layout:fixed;}
+  table.bench col.col-name{width:30%;}
+  table.bench col.col-calls{width:12%;}
+  table.bench col.col-total{width:14%;}
+  table.bench col.col-avg{width:12%;}
+  table.bench col.col-share{width:16%;}
+  table.bench col.col-impact{width:16%;}
+  table.bench th{
+    text-align:left; font-family:var(--font-d); text-transform:uppercase; letter-spacing:.05em;
+    font-size:10.5px; color:var(--text-faint); font-weight:600; padding:6px 8px;
+    border-bottom:1px solid var(--line);
+  }
+  table.bench td{padding:7px 8px; border-bottom:1px solid var(--line-soft); color:var(--text-dim); overflow:hidden;}
+  table.bench tr:last-child td{border-bottom:none;}
+  table.bench td.name{color:var(--text); font-weight:600;}
+  .name-details{display:inline-block; max-width:calc(100% - 15px); vertical-align:middle;}
+  .name-summary{
+    display:block; cursor:pointer; list-style:none;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  }
+  .name-summary::-webkit-details-marker{display:none;}
+  .name-summary::before{content:'▸ '; color:var(--text-faint); font-size:9px;}
+  .name-details[open] .name-summary::before{content:'▾ ';}
+  .name-details[open] .name-summary{
+    white-space:normal; overflow-wrap:anywhere; word-break:break-word; hyphens:auto;
+  }
+  .name-full{
+    margin-top:3px; font-size:10.5px; font-weight:400; color:var(--text-dim);
+    overflow-wrap:anywhere; word-break:break-word; hyphens:auto;
+  }
+  .dot{display:inline-block; width:7px; height:7px; border-radius:50%; margin-right:6px; background:var(--text-faint);}
+  .dot.run{background:var(--accent); box-shadow:0 0 6px var(--accent-glow);}
+  .impact{padding:2px 7px; border-radius:10px; font-size:10px; letter-spacing:.03em;}
+  .impact.low{background:rgba(93,255,160,.12); color:var(--accent);}
+  .impact.med{background:rgba(255,180,84,.12); color:var(--amber);}
+  .impact.high{background:rgba(255,180,84,.18); color:var(--amber);}
+  .impact.crit{background:rgba(255,92,92,.15); color:var(--red);}
+  .empty-row td{color:var(--text-faint); text-align:center; padding:16px 8px; font-style:italic;}
+
+  details.advanced{margin-top:12px; border-top:1px dashed var(--line); padding-top:10px;}
+  details.advanced summary{cursor:pointer; color:var(--text-dim); font-size:11.5px; letter-spacing:.03em;}
+  .custom-form{display:flex; flex-direction:column; gap:8px; margin-top:10px;}
+  .custom-form input[type=text], .custom-form textarea{
+    background:var(--bg-2); border:1px solid var(--line); color:var(--text);
+    border-radius:var(--radius); padding:8px; font-size:11.5px; width:100%;
+  }
+  .custom-form textarea{min-height:70px; resize:vertical;}
+  .custom-form .row{display:flex; gap:8px; align-items:center; flex-wrap:wrap;}
+
+  /* ---------- Log & Recs ---------- */
+  #logPanel{grid-area:log;}
+  #recsPanel{grid-area:recs;}
+  .scroll{max-height:260px; overflow-y:auto; padding-right:4px;}
+  .scroll::-webkit-scrollbar{width:6px;}
+  .scroll::-webkit-scrollbar-thumb{background:var(--line); border-radius:4px;}
+  .log-entry{
+    display:flex; gap:8px; padding:6px 0; border-bottom:1px solid var(--line-soft);
+    font-size:11px;
+  }
+  .log-entry:last-child{border-bottom:none;}
+  .log-entry .t{color:var(--text-faint); flex:none; width:58px;}
+  .log-entry .sev{flex:none; width:7px; height:7px; border-radius:50%; margin-top:4px;}
+  .log-entry .sev.info{background:var(--cyan);}
+  .log-entry .sev.warning{background:var(--amber);}
+  .log-entry .sev.critical{background:var(--red);}
+  .log-entry .m{color:var(--text-dim);}
+
+  .rec{
+    padding:9px 0; border-bottom:1px solid var(--line-soft);
+  }
+  .rec:last-child{border-bottom:none;}
+  .rec .rhead{display:flex; align-items:center; gap:7px; margin-bottom:3px;}
+  .rec .tag{
+    font-size:9.5px; text-transform:uppercase; letter-spacing:.06em; padding:2px 7px; border-radius:9px;
+    font-family:var(--font-d); font-weight:600;
+  }
+  .rec .tag.info{background:rgba(94,205,250,.12); color:var(--cyan);}
+  .rec .tag.warning{background:rgba(255,180,84,.14); color:var(--amber);}
+  .rec .tag.critical{background:rgba(255,92,92,.16); color:var(--red);}
+  .rec .rtitle{font-size:12px; color:var(--text); font-weight:600;}
+  .rec .rbody{font-size:11px; color:var(--text-dim); line-height:1.5;}
+
+  footer.note{
+    padding:14px 22px 18px; border-top:1px solid var(--line);
+    font-size:10.5px; color:var(--text-faint); display:flex; justify-content:space-between;
+    gap:14px; flex-wrap:wrap; align-items:center;
+  }
+  footer.note .export{display:flex; gap:8px;}
+  /* ---------- Phone-width pass ---------- */
+  button, .dropzone, .dz-browse{ touch-action:manipulation; -webkit-tap-highlight-color:transparent; }
+  @media (max-width: 600px){
+    body{padding:8px; font-size:13px;}
+    .instrument{border-radius:4px;}
+    .topbar{padding:12px 14px; gap:10px;}
+    .brand .mark{font-size:19px;}
+    .brand .sub{font-size:10px;}
+    .controls{width:100%; justify-content:space-between;}
+    .status-chip{flex:1 1 auto; justify-content:center; padding:8px 10px;}
+    .btn{padding:11px 14px; font-size:12.5px; min-height:42px;}
+    .btn.small{padding:9px 12px; font-size:11.5px; min-height:38px;}
+    .grid{padding:10px; gap:10px;}
+  
+</style>
+</head>
+<body>
+
+<div class="instrument">
+  <div class="rivets"><span></span><span></span><span></span><span></span></div>
+
+  <div class="topbar">
+    <div class="brand">
+      <div class="mark">Load<em>/</em>Watt</div>
+      <div class="sub">page power &amp; lag instrumentation panel</div>
+    </div>
+    <div class="controls">
+      <div class="status-chip"><span class="led" id="recLed"></span><span id="sessionClock">00:00</span></div>
+      <button class="btn primary" id="recBtn">Start recording</button>
+      <button class="btn ghost" id="resetBtn">Reset session</button>
+    </div>
+  </div>
+
+  <div class="grid">
+
+    <!-- TARGET FILE -->
+    <section class="panel" id="targetPanel">
+      <div class="panel-head"><h2>Target file</h2><span class="hint">profile a page of your own</span></div>
+      <div class="dropzone" id="dropzone">
+        <div class="dz-icon">&#8681;</div>
+        <div class="dz-text">Drag &amp; drop an <b>.html</b> file here, or <span class="dz-browse">browse</span></div>
+        <input type="file" id="targetFileInput" accept=".html,.htm" hidden>
+      </div>
+      <div class="target-status" id="targetStatus">No file loaded. Drop an .html file and it's auto-instrumented: every <code>setInterval</code>/<code>setTimeout</code>/<code>requestAnimationFrame</code> callback and DOM event listener is timed automatically, plus any top-level function it defines. Page-load timing (paint, long tasks, layout shift) is also picked up with no changes needed.</div>
+      <div class="target-readout" id="targetReadout"></div>
+      <div class="frame-controls" id="frameControls" hidden>
+        <span class="hint">preview height</span>
+        <button class="btn small ghost" id="frameShrink" type="button">− shorter</button>
+        <button class="btn small ghost" id="frameGrow" type="button">+ taller</button>
+      </div>
+      <iframe id="targetFrame" title="target file preview"></iframe>
+    </section>
+
+    <!-- GAUGES -->
+    <section class="panel" id="gaugesPanel">
+      <div class="panel-head"><h2>Composite indices</h2><span class="hint">estimated</span></div>
+
+      <div class="gauge-block">
+        <div class="gauge-label"><span>Power draw index</span><span class="val" id="powerVal">0<span class="unit">/100</span></span></div>
+        <canvas class="gauge" id="powerGauge"></canvas>
+        <div class="gauge-tag good" id="powerTag">nominal</div>
+      </div>
+
+      <div class="gauge-block">
+        <div class="gauge-label"><span>Lag index</span><span class="val" id="lagVal">0<span class="unit">/100</span></span></div>
+        <canvas class="gauge" id="lagGauge"></canvas>
+        <div class="gauge-tag good" id="lagTag">nominal</div>
+      </div>
+    </section>
+
+    <!-- CHANNELS -->
+    <section class="panel" id="channelsPanel">
+      <div class="panel-head"><h2>Live channels</h2><span class="hint">last ~2 min</span></div>
+
+      <div class="channel">
+        <div class="channel-head"><span class="ch-name">CH.1 — <b>Frame time</b></span><span class="ch-val" id="ch1val">—</span></div>
+        <canvas class="strip" id="ch1"></canvas>
+      </div>
+      <div class="channel">
+        <div class="channel-head"><span class="ch-name">CH.2 — <b>Main-thread busy</b></span><span class="ch-val" id="ch2val">—</span></div>
+        <canvas class="strip" id="ch2"></canvas>
+      </div>
+      <div class="channel">
+        <div class="channel-head"><span class="ch-name">CH.3 — <b>Network throughput</b></span><span class="ch-val" id="ch3val">—</span></div>
+        <canvas class="strip" id="ch3"></canvas>
+      </div>
+      <div class="channel">
+        <div class="channel-head"><span class="ch-name">CH.4 — <b>JS heap</b></span><span class="ch-val" id="ch4val">—</span></div>
+        <canvas class="strip" id="ch4"></canvas>
+      </div>
+    </section>
+
+    <!-- READOUTS -->
+    <section class="panel" id="readoutsPanel">
+      <div class="panel-head"><h2>Readouts</h2><span class="hint">session totals &amp; snapshots</span></div>
+      <div class="readout-row" id="readoutRow"></div>
+    </section>
+
+    <!-- PROCESS BENCH -->
+    <section class="panel" id="benchPanel">
+      <div class="panel-head"><h2>Process bench</h2><span class="hint">run known antipatterns, watch the channels react</span></div>
+
+      <div class="preset-row" id="presetRow"></div>
+
+      <div class="bench-scroll">
+        <table class="bench">
+          <colgroup>
+            <col class="col-name"><col class="col-calls"><col class="col-total">
+            <col class="col-avg"><col class="col-share"><col class="col-impact">
+          </colgroup>
+          <thead><tr>
+            <th>Process</th><th>Calls</th><th>Total ms</th><th>Avg ms</th><th>Session share</th><th>Impact</th>
+          </tr></thead>
+          <tbody id="benchBody"><tr class="empty-row"><td colspan="6">No processes run yet — try a preset above.</td></tr></tbody>
+        </table>
+      </div>
+
+      <details class="advanced">
+        <summary>Custom process (advanced — runs your own JS in this page)</summary>
+        <div class="custom-form">
+          <input type="text" id="customName" placeholder="Process name, e.g. &quot;sort large array&quot;">
+          <textarea id="customCode" placeholder="// function body — runs once per call, wrapped in try/catch&#10;// example:&#10;let a = []; for (let i=0;i<50000;i++) a.push(Math.sqrt(i));"></textarea>
+          <div class="row">
+            <button class="btn small" id="customAdd">Add process</button>
+            <span class="hint" style="color:var(--text-faint)">Executes with <code>new Function()</code> in your own browser tab. No data leaves this page.</span>
+          </div>
+        </div>
+      </details>
+    </section>
+
+    <!-- LOG -->
+    <section class="panel" id="logPanel">
+      <div class="panel-head"><h2>Diagnostic log</h2><span class="hint" id="logCount">0 events</span></div>
+      <div class="scroll" id="logList">
+        <div class="log-entry"><span class="t">—</span><span class="m" style="color:var(--text-faint); font-style:italic;">No long tasks or shifts detected yet.</span></div>
+      </div>
+    </section>
+
+    <!-- RECOMMENDATIONS -->
+    <section class="panel" id="recsPanel">
+      <div class="panel-head"><h2>Tuning recommendations</h2><span class="hint">refreshes every 5s</span></div>
+      <div class="scroll" id="recsList">
+        <div class="rec"><div class="rbody" style="font-style:italic; color:var(--text-faint);">Start recording — recommendations appear once enough data has been collected.</div></div>
+      </div>
+    </section>
+
+  </div>
+
+  <footer class="note">
+    <div>Indices are directional estimates built from browser-exposed timing APIs (Long Tasks, frame timing, Resource Timing, heap size where supported). Browsers do not expose true wattage — treat these as relative signal, not a calibrated measurement. Metrics marked <span style="color:var(--text-faint)">n/a</span> aren't exposed by this browser.</div>
+    <div class="export"><button class="btn small ghost" id="exportBtn">Export report (.json)</button></div>
+  </footer>
+</div>
+
+<script>
+(function(){
+  'use strict';
+
+  /* ============================== STATE ============================== */
+  const state = {
+    recording:false,
+    userPaused:false,      // true once the user explicitly hits Stop — blocks auto-restart
+    expandedNames:new Set(), // process ids whose full name is expanded in the bench table
+    startTime:null,
+    frameBuf:[],           // transient dt buffer between ticks
+    lastFrameTs:null,
+    longTasks:[],          // {t, duration}
+    cls:0,
+    clsSpikes:0,
+    fcp:null,
+    lcp:null,
+    memSamples:[],         // {t, used}
+    netEntries:[],         // {t, bytes}
+    domMutSinceTick:0,
+    domRateHist:[],
+    battery:{supported:false, level:null, charging:null, samples:[]},
+    ch:{ch1:[], ch2:[], ch3:[], ch4:[]},
+    ch2hist:[], // busy% history for smoothing
+    fpsHist:[],
+    powerHist:[],
+    lagHist:[],
+    processes:new Map(),   // name -> {calls,totalMs,maxMs,running,mode,stop,impact}
+    log:[],
+    recs:[]
+  };
+
+  const targetState = {
+    fileName:null, loaded:false, autoWrappedGlobals:0,
+    longTasks:[], fcp:null, lcp:null, cls:0
+  };
+
+  const CAP = 220; // ~110s of 500ms samples in strip charts
+  const supports = {
+    longtask:false, layoutShift:false, paint:false, lcp:false, memory:!!performance.memory, battery:false
+  };
+
+  function now(){ return performance.now(); }
+  function fmt(n, d){ if(n===null||n===undefined||isNaN(n)) return '—'; return Number(n).toFixed(d===undefined?1:d); }
+  function clamp(v,a,b){ return Math.max(a,Math.min(b,v)); }
+  function pad2(n){ return n<10?'0'+n:''+n; }
+
+  /* ============================== CANVAS HELPERS ============================== */
+  function fitCanvas(canvas){
+    const dpr = window.devicePixelRatio||1;
+    const w = canvas.clientWidth||canvas.parentElement.clientWidth;
+    const h = canvas.clientHeight||60;
+    canvas.width = Math.max(1,Math.round(w*dpr));
+    canvas.height = Math.max(1,Math.round(h*dpr));
+    const ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+    return ctx;
+  }
+
+  function drawStrip(canvas, data, opts){
+    const ctx = fitCanvas(canvas);
+    const w = canvas.clientWidth, h = canvas.clientHeight;
+    ctx.clearRect(0,0,w,h);
+    if(!opts.supported){
+      ctx.fillStyle = 'rgba(255,255,255,.03)';
+      ctx.fillRect(0,0,w,h);
+      ctx.fillStyle = getVar('--text-faint');
+      ctx.font = '11px JetBrains Mono, monospace';
+      ctx.textBaseline='middle'; ctx.textAlign='center';
+      ctx.fillText('not exposed by this browser', w/2, h/2);
+      return;
+    }
+    if(!data || data.length<2){
+      ctx.fillStyle = getVar('--text-faint');
+      ctx.font = '11px JetBrains Mono, monospace';
+      ctx.textBaseline='middle'; ctx.textAlign='center';
+      ctx.fillText('awaiting data…', w/2, h/2);
+      return;
+    }
+    const max = opts.max;
+    const last = data[data.length-1];
+    let color = opts.color;
+    if(opts.critAt!==undefined && last>=opts.critAt) color = getVar('--red');
+    else if(opts.warnAt!==undefined && last>=opts.warnAt) color = getVar('--amber');
+
+    ctx.beginPath();
+    data.forEach((v,i)=>{
+      const x = (i/(CAP-1))*w;
+      const y = h - clamp(v/max,0,1)*h*0.9 - h*0.05;
+      if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+    });
+    const lineX2 = ((data.length-1)/(CAP-1))*w;
+    ctx.lineTo(lineX2, h);
+    ctx.lineTo((0/(CAP-1))*w, h);
+    ctx.closePath();
+    const grad = ctx.createLinearGradient(0,0,0,h);
+    grad.addColorStop(0, color+'55');
+    grad.addColorStop(1, color+'02');
+    ctx.fillStyle = grad;
+    ctx.fill();
+
+    ctx.beginPath();
+    data.forEach((v,i)=>{
+      const x = (i/(CAP-1))*w;
+      const y = h - clamp(v/max,0,1)*h*0.9 - h*0.05;
+      if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+    });
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1.5;
+    ctx.shadowColor = color;
+    ctx.shadowBlur = 4;
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+  }
+
+  function getVar(name){
+    return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  }
+
+  function drawGauge(canvas, value, zones){
+    const ctx = fitCanvas(canvas);
+    const w = canvas.clientWidth, h = canvas.clientHeight;
+    ctx.clearRect(0,0,w,h);
+    const cx = w/2, cy = h*0.92, r = Math.min(w*0.46, h*0.82);
+    const startA = Math.PI, endA = 0;
+
+    // zone arcs
+    const zoneStops = [[0,zones[0],'--accent'],[zones[0],zones[1],'--amber'],[zones[1],100,'--red']];
+    zoneStops.forEach(([a,b])=>{});
+    zoneStops.forEach(seg=>{
+      const [a,b,varname] = seg;
+      const a1 = Math.PI - (a/100)*Math.PI;
+      const a2 = Math.PI - (b/100)*Math.PI;
+      ctx.beginPath();
+      ctx.arc(cx,cy,r,a1,a2,true);
+      ctx.strokeStyle = getVar(varname);
+      ctx.globalAlpha = .28;
+      ctx.lineWidth = 8;
+      ctx.lineCap='butt';
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    });
+
+    // ticks
+    for(let t=0;t<=10;t++){
+      const ang = Math.PI - (t/10)*Math.PI;
+      const x1 = cx+Math.cos(ang)*(r+6), y1 = cy-Math.sin(ang)*(r+6);
+      const x2 = cx+Math.cos(ang)*(r+11), y2 = cy-Math.sin(ang)*(r+11);
+      ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2);
+      ctx.strokeStyle = getVar('--text-faint'); ctx.lineWidth=1; ctx.stroke();
+    }
+
+    // needle
+    const v = clamp(value,0,100);
+    const ang = Math.PI - (v/100)*Math.PI;
+    let needleColor = getVar('--accent');
+    if(v>=zones[1]) needleColor = getVar('--red');
+    else if(v>=zones[0]) needleColor = getVar('--amber');
+
+    ctx.save();
+    ctx.translate(cx,cy);
+    ctx.rotate(-ang);
+    ctx.beginPath();
+    ctx.moveTo(0,3);
+    ctx.lineTo(r*0.88,0);
+    ctx.lineTo(0,-3);
+    ctx.closePath();
+    ctx.fillStyle = needleColor;
+    ctx.shadowColor = needleColor;
+    ctx.shadowBlur = 8;
+    ctx.fill();
+    ctx.restore();
+    ctx.shadowBlur = 0;
+
+    ctx.beginPath();
+    ctx.arc(cx,cy,4,0,Math.PI*2);
+    ctx.fillStyle = getVar('--text');
+    ctx.fill();
+  }
+
+  /* ============================== OBSERVERS ============================== */
+  function safeObserve(type, cb, opts){
+    try{
+      const po = new PerformanceObserver(cb);
+      po.observe(Object.assign({type, buffered:true}, opts||{}));
+      return true;
+    }catch(e){ return false; }
+  }
+
+  supports.longtask = safeObserve('longtask', list=>{
+    if(!state.recording) return;
+    list.getEntries().forEach(e=>{
+      state.longTasks.push({t:e.startTime, duration:e.duration});
+      const sev = e.duration>150?'critical':(e.duration>75?'warning':'info');
+      pushLog(sev, 'Long task blocked the main thread for '+fmt(e.duration,0)+'ms');
+    });
+  });
+
+  supports.layoutShift = safeObserve('layout-shift', list=>{
+    if(!state.recording) return;
+    list.getEntries().forEach(e=>{
+      if(e.hadRecentInput) return;
+      state.cls += e.value;
+      if(e.value>0.05){
+        state.clsSpikes++;
+        pushLog('warning', 'Layout shift spike (Δ'+fmt(e.value,3)+')');
+      }
+    });
+  });
+
+  supports.paint = safeObserve('paint', list=>{
+    list.getEntries().forEach(e=>{
+      if(e.name==='first-contentful-paint') state.fcp = e.startTime;
+    });
+  });
+
+  supports.lcp = safeObserve('largest-contentful-paint', list=>{
+    const entries = list.getEntries();
+    if(entries.length) state.lcp = entries[entries.length-1].startTime;
+  });
+
+  supports.resource = safeObserve('resource', list=>{
+    if(!state.recording) return;
+    list.getEntries().forEach(e=>{
+      state.netEntries.push({t: state.startTime + e.startTime, bytes: e.transferSize||0});
+    });
+  });
+
+  if('getBattery' in navigator){
+    navigator.getBattery().then(b=>{
+      supports.battery = true;
+      state.battery.supported = true;
+      const sample = ()=>{ state.battery.level=b.level; state.battery.charging=b.charging; state.battery.samples.push({t:now(), level:b.level}); };
+      sample();
+      b.addEventListener('levelchange', sample);
+      b.addEventListener('chargingchange', sample);
+    }).catch(()=>{ supports.battery=false; });
+  }
+
+  const domObserver = new MutationObserver(muts=>{
+    if(!state.recording) return;
+    state.domMutSinceTick += muts.length;
+  });
+  domObserver.observe(document.documentElement, {childList:true, subtree:true, attributes:true, characterData:true});
+
+  /* ============================== FRAME LOOP ============================== */
+  function frameLoop(ts){
+    if(state.lastFrameTs!==null){
+      const dt = ts - state.lastFrameTs;
+      if(state.recording && dt>0 && dt<2000) state.frameBuf.push(dt);
+    }
+    state.lastFrameTs = ts;
+    requestAnimationFrame(frameLoop);
+  }
+  requestAnimationFrame(frameLoop);
+
+  /* ============================== PROCESS BENCH ============================== */
+  const PRESETS = [
+    {
+      id:'fib', name:'CPU burst (recursion)',
+      desc:'Synchronous fib(30) — simulates a heavy compute task blocking the main thread.',
+      mode:'burst',
+      run(){ return fib(30); }
+    },
+    {
+      id:'domthrash', name:'DOM thrash',
+      desc:'Unbatched read/write loop forcing synchronous layout every frame.',
+      mode:'toggle',
+      start(proc){
+        const el = ensureDemoEl();
+        proc._raf = null;
+        const step = ()=>{
+          const t0 = now();
+          for(let i=0;i<25;i++){
+            const h = el.offsetHeight;
+            el.style.height = (h%40+20)+'px';
+          }
+          recordCall(proc, now()-t0);
+          proc._raf = requestAnimationFrame(step);
+        };
+        proc._raf = requestAnimationFrame(step);
+      },
+      stop(proc){ if(proc._raf) cancelAnimationFrame(proc._raf); }
+    },
+    {
+      id:'timerspam', name:'Timer spam',
+      desc:'setInterval firing every 4ms — excess wake-ups drain power on real devices.',
+      mode:'toggle',
+      start(proc){
+        proc._id = setInterval(()=>{
+          const t0 = now();
+          let x=0; for(let i=0;i<2000;i++) x+=Math.sqrt(i);
+          recordCall(proc, now()-t0);
+        }, 4);
+      },
+      stop(proc){ clearInterval(proc._id); }
+    },
+    {
+      id:'raf', name:'Animation loop (rAF)',
+      desc:'Continuous requestAnimationFrame transform update on a demo element.',
+      mode:'toggle',
+      start(proc){
+        const el = ensureDemoEl();
+        let x = 0;
+        const step = ()=>{
+          const t0 = now();
+          x = (x+2)%240;
+          el.style.transform = 'translateX('+x+'px)';
+          recordCall(proc, now()-t0);
+          proc._raf = requestAnimationFrame(step);
+        };
+        proc._raf = requestAnimationFrame(step);
+      },
+      stop(proc){ if(proc._raf) cancelAnimationFrame(proc._raf); }
+    },
+    {
+      id:'fetchpoll', name:'Fetch polling (simulated)',
+      desc:'Fires a simulated request every 500ms — models chatty network polling.',
+      mode:'toggle',
+      start(proc){
+        proc._id = setInterval(()=>{
+          const t0 = now();
+          const delay = 100+Math.random()*400;
+          setTimeout(()=>{ recordCall(proc, now()-t0); }, delay);
+        }, 500);
+      },
+      stop(proc){ clearInterval(proc._id); }
+    },
+    {
+      id:'memballoon', name:'Memory balloon',
+      desc:'Allocates 5MB chunks and retains them — models a growing leak. Capped at 200MB.',
+      mode:'toggle',
+      start(proc){
+        proc._store = proc._store || [];
+        proc._id = setInterval(()=>{
+          if(proc._store.length>=40){
+            pushLog('warning','Memory balloon reached its 200MB safety cap — stopping.');
+            stopProcess(proc.id);
+            return;
+          }
+          const t0 = now();
+          const chunk = new Float64Array(655360); // ~5MB
+          for(let i=0;i<chunk.length;i+=997) chunk[i]=Math.random();
+          proc._store.push(chunk);
+          recordCall(proc, now()-t0);
+        }, 1000);
+      },
+      stop(proc){
+        clearInterval(proc._id);
+      },
+      release(proc){ proc._store = []; pushLog('info','Memory balloon released — allocated chunks dereferenced for GC.'); }
+    }
+  ];
+
+  function fib(n){ return n<2?n:fib(n-1)+fib(n-2); }
+
+  let demoEl = null;
+  function ensureDemoEl(){
+    if(demoEl) return demoEl;
+    demoEl = document.createElement('div');
+    demoEl.style.cssText = 'position:fixed; width:10px; height:10px; left:-9999px; top:-9999px; background:#5dffa0;';
+    document.body.appendChild(demoEl);
+    return demoEl;
+  }
+
+  function getProc(id, name, mode){
+    if(!state.processes.has(id)){
+      state.processes.set(id, {id, name, mode, calls:0, totalMs:0, maxMs:0, running:false});
+    }
+    return state.processes.get(id);
+  }
+
+  function escapeHtml(s){
+    return String(s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+
+  function recordCall(proc, ms){
+    proc.calls++;
+    proc.totalMs += ms;
+    if(ms>proc.maxMs) proc.maxMs = ms;
+  }
+
+  function runPreset(def){
+    if(!state.recording) toggleRecording(true);
+    const proc = getProc(def.id, def.name, def.mode);
+    if(def.mode==='burst'){
+      const t0 = now();
+      def.run();
+      recordCall(proc, now()-t0);
+      renderBench();
+      return;
+    }
+    if(proc.running){ stopProcess(def.id); return; }
+    proc.running = true;
+    proc._def = def;
+    def.start(proc);
+    pushLog('info', 'Started process "'+def.name+'"');
+    renderBench(); renderPresets();
+  }
+
+  function stopProcess(id){
+    const proc = state.processes.get(id);
+    if(!proc || !proc.running) return;
+    const def = PRESETS.find(p=>p.id===id) || proc._customDef;
+    if(def && def.stop) def.stop(proc);
+    proc.running = false;
+    pushLog('info', 'Stopped process "'+proc.name+'"');
+    renderBench(); renderPresets();
+  }
+
+  function releaseProcess(id){
+    const proc = state.processes.get(id);
+    const def = PRESETS.find(p=>p.id===id);
+    if(def && def.release) def.release(proc);
+    renderBench();
+  }
+
+  function renderPresets(){
+    const row = document.getElementById('presetRow');
+    row.innerHTML = '';
+    PRESETS.forEach(def=>{
+      const proc = state.processes.get(def.id);
+      const running = proc && proc.running;
+      const box = document.createElement('div');
+      box.className = 'preset';
+      const buttons = [];
+      if(def.mode==='burst'){
+        buttons.push('<button class="btn small" data-run="'+def.id+'">Run once</button>');
+        buttons.push('<button class="btn small" data-runx10="'+def.id+'">Run ×10</button>');
+      }else{
+        buttons.push('<button class="btn small '+(running?'stop':'')+'" data-toggle="'+def.id+'">'+(running?'Stop':'Start')+'</button>');
+        if(def.id==='memballoon') buttons.push('<button class="btn small ghost" data-release="'+def.id+'">Release</button>');
+      }
+      box.innerHTML = '<div class="pname">'+def.name+'</div><div class="pdesc">'+def.desc+'</div><div class="prow">'+buttons.join('')+'</div>';
+      row.appendChild(box);
+    });
+    row.querySelectorAll('[data-run]').forEach(b=>b.onclick=()=>runPreset(PRESETS.find(p=>p.id===b.dataset.run)));
+    row.querySelectorAll('[data-runx10]').forEach(b=>b.onclick=()=>{
+      const def = PRESETS.find(p=>p.id===b.dataset.runx10);
+      if(!state.recording) toggleRecording(true);
+      const proc = getProc(def.id, def.name, def.mode);
+      for(let i=0;i<10;i++){ const t0=now(); def.run(); recordCall(proc, now()-t0); }
+      renderBench();
+    });
+    row.querySelectorAll('[data-toggle]').forEach(b=>b.onclick=()=>runPreset(PRESETS.find(p=>p.id===b.dataset.toggle)));
+    row.querySelectorAll('[data-release]').forEach(b=>b.onclick=()=>releaseProcess(b.dataset.release));
+  }
+
+  function renderBench(){
+    const body = document.getElementById('benchBody');
+    if(state.processes.size===0){
+      body.innerHTML = '<tr class="empty-row"><td colspan="6">No processes run yet — try a preset above.</td></tr>';
+      return;
+    }
+    const elapsed = state.startTime ? (now()-state.startTime) : 1;
+    let rows = '';
+    state.processes.forEach(p=>{
+      const share = clamp((p.totalMs/Math.max(elapsed,1))*100, 0, 100);
+      let cls='low', label='Low';
+      if(share>20){cls='crit'; label='Critical';}
+      else if(share>8){cls='high'; label='High';}
+      else if(share>2){cls='med'; label='Medium';}
+      rows += '<tr>'+
+        '<td class="name"><span class="dot '+(p.running?'run':'')+'"></span>'+
+          '<details class="name-details" data-pid="'+p.id+'"'+(state.expandedNames.has(p.id)?' open':'')+'><summary class="name-summary" title="'+escapeHtml(p.name)+'">'+escapeHtml(p.name)+'</summary>'+
+          '<div class="name-full">'+escapeHtml(p.name)+'</div>'+
+          '</details></td>'+
+        '<td>'+p.calls+'</td>'+
+        '<td>'+fmt(p.totalMs,0)+'</td>'+
+        '<td>'+fmt(p.calls?p.totalMs/p.calls:0,2)+'</td>'+
+        '<td>'+fmt(share,1)+'%</td>'+
+        '<td><span class="impact '+cls+'">'+label+'</span></td>'+
+        '</tr>';
+    });
+    body.innerHTML = rows;
+    body.querySelectorAll('.name-details').forEach(d=>{
+      d.addEventListener('toggle', ()=>{
+        if(d.open) state.expandedNames.add(d.dataset.pid);
+        else state.expandedNames.delete(d.dataset.pid);
+      });
+    });
+  }
+
+  document.getElementById('customAdd').onclick = ()=>{
+    const nameEl = document.getElementById('customName');
+    const codeEl = document.getElementById('customCode');
+    const name = (nameEl.value||'custom process').trim();
+    const code = codeEl.value;
+    if(!code.trim()){ pushLog('warning','Custom process needs a function body.'); return; }
+    let fn;
+    try{ fn = new Function(code); }
+    catch(e){ pushLog('critical','Custom process failed to compile: '+e.message); return; }
+    const id = 'custom_'+Date.now();
+    const def = {
+      id, name, mode:'burst',
+      run(){ try{ fn(); }catch(e){ pushLog('critical', 'Custom process "'+name+'" threw: '+e.message); } }
+    };
+    PRESETS.push(def);
+    if(!state.recording) toggleRecording(true);
+    const proc = getProc(def.id, def.name, def.mode);
+    const t0 = now(); def.run(); recordCall(proc, now()-t0);
+    renderPresets(); renderBench();
+    nameEl.value=''; codeEl.value='';
+  };
+
+  /* ============================== LOG & RECS ============================== */
+  function pushLog(sev, msg){
+    state.log.unshift({t: state.startTime?(now()-state.startTime):0, sev, msg});
+    if(state.log.length>150) state.log.length=150;
+    renderLog();
+  }
+  function renderLog(){
+    const list = document.getElementById('logList');
+    document.getElementById('logCount').textContent = state.log.length+' events';
+    if(state.log.length===0){
+      list.innerHTML = '<div class="log-entry"><span class="t">—</span><span class="m" style="color:var(--text-faint); font-style:italic;">No long tasks or shifts detected yet.</span></div>';
+      return;
+    }
+    list.innerHTML = state.log.slice(0,60).map(e=>{
+      const s = Math.floor(e.t/1000);
+      const ts = pad2(Math.floor(s/60))+':'+pad2(s%60);
+      return '<div class="log-entry"><span class="t">'+ts+'</span><span class="sev '+e.sev+'"></span><span class="m">'+e.msg+'</span></div>';
+    }).join('');
+  }
+
+  function pushRec(id, sev, title, body){
+    state.recs.push({id, sev, title, body});
+  }
+  function renderRecs(){
+    const list = document.getElementById('recsList');
+    if(state.recs.length===0){
+      list.innerHTML = '<div class="rec"><div class="rbody" style="font-style:italic; color:var(--text-faint);">No issues surfaced yet — channels look nominal.</div></div>';
+      return;
+    }
+    const order = {critical:0, warning:1, info:2};
+    const sorted = state.recs.slice().sort((a,b)=>order[a.sev]-order[b.sev]);
+    list.innerHTML = sorted.map(r=>
+      '<div class="rec"><div class="rhead"><span class="tag '+r.sev+'">'+r.sev+'</span><span class="rtitle">'+r.title+'</span></div><div class="rbody">'+r.body+'</div></div>'
+    ).join('');
+  }
+
+  function evaluateRecommendations(){
+    state.recs = [];
+    const elapsedS = state.startTime ? (now()-state.startTime)/1000 : 0;
+    if(elapsedS<3) return;
+
+    const fpsAvg = avg(state.fpsHist.slice(-6));
+    if(fpsAvg && fpsAvg<30){
+      pushRec('fps','critical','Frame rate averaging '+fmt(fpsAvg,0)+' fps', 'Rendering is dropping well below 60fps. Profile the main thread for scripts running during animation or scroll, and defer non-critical work with requestIdleCallback.');
+    } else if(fpsAvg && fpsAvg<50){
+      pushRec('fps','warning','Frame rate averaging '+fmt(fpsAvg,0)+' fps', 'Slightly under budget. Check for layout thrashing or synchronous style reads inside animation callbacks.');
+    }
+
+    const recentLT = state.longTasks.filter(t=>t.t> (now()-state.startTime)-10000);
+    const tbt10s = recentLT.reduce((s,t)=>s+Math.max(0,t.duration-50),0);
+    if(tbt10s>800){
+      pushRec('tbt','critical','Total blocking time is high ('+fmt(tbt10s,0)+'ms over the last 10s)', 'One or more long tasks are repeatedly blocking input. Break large synchronous work into chunks (setTimeout/scheduler.postTask) or move it to a Web Worker.');
+    } else if(tbt10s>250){
+      pushRec('tbt','warning','Elevated blocking time ('+fmt(tbt10s,0)+'ms over 10s)', 'Some tasks are exceeding the 50ms budget. Consider debouncing handlers that trigger this work.');
+    }
+
+    if(state.cls>0.25){
+      pushRec('cls','critical','Cumulative layout shift is '+fmt(state.cls,3), 'Significant unexpected movement detected. Reserve space for images/embeds with explicit width and height, and avoid inserting content above existing content.');
+    } else if(state.cls>0.1){
+      pushRec('cls','warning','Layout shift is above the usual comfort threshold ('+fmt(state.cls,3)+')', 'Reserve space for late-loading elements (ads, images, web fonts) to reduce shifting.');
+    }
+
+    const domRate = avg(state.domRateHist.slice(-6));
+    if(domRate && domRate>150){
+      pushRec('dom','warning', 'High DOM mutation rate ('+fmt(domRate,0)+'/s)', 'Frequent DOM writes force extra style/layout work. Batch updates with a DocumentFragment or a virtual-DOM diff instead of writing in a loop.');
+    }
+
+    const netKBs = avg(state.ch.ch3.slice(-6));
+    if(netKBs && netKBs>150){
+      pushRec('net','warning','Sustained network throughput ('+fmt(netKBs,0)+' KB/s)', 'Heavy transfer volume costs both radio power and load time. Check for uncompressed assets, oversized images, or polling that could be replaced with push/streaming.');
+    }
+
+    if(supports.memory && state.memSamples.length>10){
+      const recent = state.memSamples.slice(-10);
+      const dtS = (recent[recent.length-1].t - recent[0].t)/1000;
+      const dMB = (recent[recent.length-1].used - recent[0].used)/1e6;
+      if(dtS>3 && dMB/dtS>1){
+        pushRec('mem','critical','Heap growing at '+fmt(dMB/dtS,2)+' MB/s without release', 'This pattern matches a memory leak signature. Check for retained references — event listeners never removed, growing arrays/caches, or detached DOM nodes.');
+      }
+    }
+
+    state.processes.forEach(p=>{
+      const share = (p.totalMs/Math.max(now()-state.startTime,1))*100;
+      if(share>15){
+        pushRec('proc-'+p.id,'critical','"'+p.name+'" is consuming '+fmt(share,0)+'% of session time', 'This process dominates main-thread time. Throttle its frequency, move heavy portions off the main thread, or gate it behind user interaction.');
+      } else if(share>5){
+        pushRec('proc-'+p.id,'warning','"'+p.name+'" has a measurable footprint ('+fmt(share,1)+'% of session)', 'Worth reviewing if this runs continuously in production — consider reducing its frequency.');
+      }
+    });
+
+    if(state.battery.supported && state.battery.samples.length>4 && state.battery.charging===false){
+      const s = state.battery.samples;
+      const dt = (s[s.length-1].t - s[0].t)/60000;
+      const dLevel = (s[0].level - s[s.length-1].level)*100;
+      if(dt>0.3 && dLevel/dt>1.5){
+        pushRec('batt','warning','Battery draining at ~'+fmt(dLevel/dt,1)+'%/min', 'This correlates with whichever processes were active in the bench above — stop them one at a time to isolate the source.');
+      }
+    }
+
+    renderRecs();
+  }
+
+  function avg(arr){ if(!arr||arr.length===0) return null; return arr.reduce((a,b)=>a+b,0)/arr.length; }
+
+  /* ============================== TICK / AGGREGATION ============================== */
+  let tickCount = 0;
+  function tick(){
+    if(!state.recording){ updateClock(); return; }
+    tickCount++;
+
+    // CH1: frame time avg (ms), fps
+    const frames = state.frameBuf.splice(0, state.frameBuf.length);
+    const frameAvg = frames.length? avg(frames) : (state.ch.ch1.length?state.ch.ch1[state.ch.ch1.length-1]:16.7);
+    const fps = frameAvg>0 ? 1000/frameAvg : 60;
+    pushCh('ch1', frameAvg);
+    state.fpsHist.push(fps); if(state.fpsHist.length>60) state.fpsHist.shift();
+
+    // CH2: main thread busy % from long tasks in last 1000ms
+    const windowStart = (now()-state.startTime)-1000;
+    const busySum = state.longTasks.filter(t=>t.t>=windowStart).reduce((s,t)=>s+t.duration,0);
+    const busyPct = clamp(busySum/1000*100,0,100);
+    pushCh('ch2', busyPct);
+
+    // CH3: network KB/s in last 500ms window
+    const netWindowStart = now()-500;
+    const bytes = state.netEntries.filter(e=>e.t>=netWindowStart).reduce((s,e)=>s+e.bytes,0);
+    pushCh('ch3', (bytes/1024)*2);
+
+    // CH4: heap MB
+    if(supports.memory){
+      const m = performance.memory;
+      state.memSamples.push({t:now(), used:m.usedJSHeapSize});
+      if(state.memSamples.length>400) state.memSamples.shift();
+      pushCh('ch4', m.usedJSHeapSize/1e6);
+    }
+
+    // DOM mutation rate
+    const rate = state.domMutSinceTick/0.5;
+    state.domMutSinceTick = 0;
+    state.domRateHist.push(rate); if(state.domRateHist.length>60) state.domRateHist.shift();
+
+    renderChannels();
+    renderReadouts(fps, busyPct);
+    renderBench();
+    updateClock();
+
+    // composite indices (smoothed)
+    const busyAvg = avg(state.ch.ch2.slice(-6))||0;
+    const tbt10s = state.longTasks.filter(t=>t.t>(now()-state.startTime)-10000).reduce((s,t)=>s+Math.max(0,t.duration-50),0);
+    const tbtNorm = clamp(tbt10s/6/3000*100*6,0,100); // ms/min-ish, capped
+    const domNorm = clamp((avg(state.domRateHist.slice(-6))||0)/200*100,0,100);
+    const netNorm = clamp((avg(state.ch.ch3.slice(-6))||0)/500*100,0,100);
+
+    let powerIndex;
+    if(supports.memory && state.memSamples.length>10){
+      const recent = state.memSamples.slice(-10);
+      const dtS = Math.max(0.5,(recent[recent.length-1].t-recent[0].t)/1000);
+      const dMB = (recent[recent.length-1].used-recent[0].used)/1e6;
+      const memNorm = clamp((dMB/dtS)/5*100,0,100);
+      powerIndex = 0.35*busyAvg + 0.25*tbtNorm + 0.15*domNorm + 0.15*netNorm + 0.10*memNorm;
+    } else {
+      powerIndex = (0.35*busyAvg + 0.25*tbtNorm + 0.15*domNorm + 0.15*netNorm)/0.90;
+    }
+    powerIndex = Math.round(clamp(powerIndex,0,100));
+
+    const fpsAvg6 = avg(state.fpsHist.slice(-6))||60;
+    const fpsNorm = clamp((60-fpsAvg6)/60*100,0,100);
+    const clsNorm = clamp(state.cls/0.5*100,0,100);
+    const lagIndex = Math.round(clamp(0.45*fpsNorm + 0.35*tbtNorm + 0.20*clsNorm,0,100));
+
+    state.powerHist.push(powerIndex); if(state.powerHist.length>CAP) state.powerHist.shift();
+    state.lagHist.push(lagIndex); if(state.lagHist.length>CAP) state.lagHist.shift();
+
+    updateGauge('powerGauge','powerVal','powerTag', powerIndex);
+    updateGauge('lagGauge','lagVal','lagTag', lagIndex);
+
+    if(tickCount % 10 === 0) evaluateRecommendations();
+  }
+  setInterval(tick, 500);
+
+  function pushCh(key, val){
+    const arr = state.ch[key];
+    arr.push(val);
+    if(arr.length>CAP) arr.shift();
+  }
+
+  function updateGauge(canvasId, valId, tagId, value){
+    drawGauge(document.getElementById(canvasId), value, [60,80]);
+    document.getElementById(valId).innerHTML = value+'<span class="unit">/100</span>';
+    const tag = document.getElementById(tagId);
+    if(value>=80){ tag.textContent='critical'; tag.className='gauge-tag crit'; }
+    else if(value>=60){ tag.textContent='elevated'; tag.className='gauge-tag warn'; }
+    else { tag.textContent='nominal'; tag.className='gauge-tag good'; }
+  }
+
+  function renderChannels(){
+    drawStrip(document.getElementById('ch1'), state.ch.ch1, {max:50, warnAt:20, critAt:33, color:getVar('--accent'), supported:true});
+    drawStrip(document.getElementById('ch2'), state.ch.ch2, {max:100, warnAt:40, critAt:70, color:getVar('--cyan'), supported:true});
+    drawStrip(document.getElementById('ch3'), state.ch.ch3, {max:250, warnAt:120, critAt:200, color:getVar('--violet'), supported:true});
+    drawStrip(document.getElementById('ch4'), state.ch.ch4, {max:250, warnAt:120, critAt:200, color:getVar('--amber'), supported:supports.memory});
+
+    document.getElementById('ch1val').innerHTML = state.ch.ch1.length? fmt(state.ch.ch1[state.ch.ch1.length-1],1)+'ms' : '—';
+    document.getElementById('ch2val').innerHTML = state.ch.ch2.length? fmt(state.ch.ch2[state.ch.ch2.length-1],0)+'%' : '—';
+    document.getElementById('ch3val').innerHTML = state.ch.ch3.length? fmt(state.ch.ch3[state.ch.ch3.length-1],0)+' KB/s' : '—';
+    document.getElementById('ch4val').innerHTML = supports.memory ? (state.ch.ch4.length? fmt(state.ch.ch4[state.ch.ch4.length-1],1)+' MB':'—') : '<span class="na">n/a</span>';
+  }
+
+  function renderReadouts(fps, busyPct){
+    const elapsedS = state.startTime? (now()-state.startTime)/1000 : 0;
+    const tbtSession = state.longTasks.reduce((s,t)=>s+Math.max(0,t.duration-50),0);
+    const netTotalKB = state.netEntries.reduce((s,e)=>s+e.bytes,0)/1024;
+    const items = [
+      {l:'FPS (2s avg)', v:fmt(avg(state.fpsHist.slice(-4)),0), warn: fps<50, crit: fps<30},
+      {l:'Long tasks', v: state.longTasks.length, warn: state.longTasks.length>10, crit: state.longTasks.length>30},
+      {l:'Total blocking', v: fmt(tbtSession,0)+' <small>ms</small>', warn: tbtSession>500, crit: tbtSession>2000},
+      {l:'Layout shift (CLS)', v: fmt(state.cls,3), warn: state.cls>0.1, crit: state.cls>0.25},
+      {l:'First paint', v: state.fcp? fmt(state.fcp,0)+' <small>ms</small>' : (supports.paint?'—':'<span class="na">n/a</span>')},
+      {l:'Largest paint', v: state.lcp? fmt(state.lcp,0)+' <small>ms</small>' : (supports.lcp?'—':'<span class="na">n/a</span>')},
+      {l:'JS heap', v: supports.memory? fmt(state.ch.ch4[state.ch.ch4.length-1]||0,1)+' <small>MB</small>' : '<span class="na">n/a</span>'},
+      {l:'Network total', v: fmt(netTotalKB,0)+' <small>KB</small>'},
+      {l:'DOM mutation rate', v: fmt(avg(state.domRateHist.slice(-4))||0,0)+' <small>/s</small>'},
+      {l:'Battery', v: state.battery.supported? fmt((state.battery.level||0)*100,0)+'% <small>'+(state.battery.charging?'chg':'dischg')+'</small>' : '<span class="na">n/a</span>'},
+      {l:'Session length', v: fmt(elapsedS,0)+' <small>s</small>'},
+      {l:'Active processes', v: Array.from(state.processes.values()).filter(p=>p.running).length}
+    ];
+    const row = document.getElementById('readoutRow');
+    row.innerHTML = items.map(it=>{
+      let cls='readout'; if(it.crit) cls+=' crit'; else if(it.warn) cls+=' warn';
+      return '<div class="'+cls+'"><div class="rl">'+it.l+'</div><div class="rv">'+it.v+'</div></div>';
+    }).join('');
+  }
+
+  function updateClock(){
+    const el = document.getElementById('sessionClock');
+    if(!state.recording || !state.startTime){ return; }
+    const s = Math.floor((now()-state.startTime)/1000);
+    el.textContent = pad2(Math.floor(s/60))+':'+pad2(s%60);
+  }
+
+  /* ============================== RECORDING TOGGLE / RESET ============================== */
+  // `force` is used by auto-start call sites (a preset ran, the target
+  // page reported a call) — those should never override an explicit user
+  // stop. Only a direct button click (userInitiated=true) may flip
+  // userPaused, so "Stop recording" actually stays stopped.
+  function toggleRecording(force, userInitiated){
+    if(force===true && state.userPaused && !userInitiated) return; // respect an explicit stop
+    const target = force!==undefined ? force : !state.recording;
+    state.recording = target;
+    if(userInitiated) state.userPaused = !target;
+    const led = document.getElementById('recLed');
+    const btn = document.getElementById('recBtn');
+    if(target){
+      if(!state.startTime) state.startTime = now();
+      led.classList.add('on','rec-pulse');
+      btn.textContent = 'Stop recording';
+      btn.classList.remove('primary'); btn.classList.add('stop');
+      pushLog('info','Recording started');
+    } else {
+      led.classList.remove('on','rec-pulse');
+      btn.textContent = 'Start recording';
+      btn.classList.add('primary'); btn.classList.remove('stop');
+      pushLog('info','Recording paused');
+    }
+  }
+  document.getElementById('recBtn').onclick = ()=>toggleRecording(undefined, true);
+
+  document.getElementById('resetBtn').onclick = ()=>{
+    state.processes.forEach((p,id)=>{ if(p.running) stopProcess(id); });
+    state.recording=false; state.userPaused=false; state.expandedNames=new Set(); state.startTime=null; state.frameBuf=[]; state.lastFrameTs=null;
+    state.longTasks=[]; state.cls=0; state.clsSpikes=0; state.fcp=null; state.lcp=null;
+    state.memSamples=[]; state.netEntries=[]; state.domMutSinceTick=0; state.domRateHist=[];
+    state.ch={ch1:[],ch2:[],ch3:[],ch4:[]}; state.fpsHist=[]; state.powerHist=[]; state.lagHist=[];
+    state.processes=new Map(); state.log=[]; state.recs=[];
+    const led=document.getElementById('recLed'); led.classList.remove('on','rec-pulse');
+    const btn=document.getElementById('recBtn'); btn.textContent='Start recording'; btn.classList.add('primary'); btn.classList.remove('stop');
+    document.getElementById('sessionClock').textContent='00:00';
+    renderLog(); renderRecs(); renderBench(); renderPresets(); renderReadouts(60,0); renderChannels();
+    updateGauge('powerGauge','powerVal','powerTag',0);
+    updateGauge('lagGauge','lagVal','lagTag',0);
+  };
+
+  /* ============================== EXPORT ============================== */
+  document.getElementById('exportBtn').onclick = ()=>{
+    const elapsedS = state.startTime? (now()-state.startTime)/1000 : 0;
+    const procs = Array.from(state.processes.values()).map(p=>({
+      name:p.name, calls:p.calls, totalMs:Math.round(p.totalMs),
+      avgMs:+((p.calls?p.totalMs/p.calls:0).toFixed(2)),
+      sessionSharePct:+(((p.totalMs/Math.max(elapsedS*1000,1))*100).toFixed(2)),
+      running:p.running
+    }));
+    const report = {
+      generatedAt:new Date().toISOString(),
+      sessionSeconds:Math.round(elapsedS),
+      indices:{
+        power:state.powerHist.length?state.powerHist[state.powerHist.length-1]:null,
+        lag:state.lagHist.length?state.lagHist[state.lagHist.length-1]:null
+      },
+      readouts:{
+        avgFps:+((avg(state.fpsHist)||0).toFixed(1)),
+        longTaskCount:state.longTasks.length,
+        totalBlockingTimeMs:Math.round(state.longTasks.reduce((s,t)=>s+Math.max(0,t.duration-50),0)),
+        cumulativeLayoutShift:+state.cls.toFixed(4),
+        firstContentfulPaintMs:state.fcp?Math.round(state.fcp):null,
+        largestContentfulPaintMs:state.lcp?Math.round(state.lcp):null,
+        heapMB: supports.memory && state.ch.ch4.length? +state.ch.ch4[state.ch.ch4.length-1].toFixed(1) : null,
+        networkTotalKB:+((state.netEntries.reduce((s,e)=>s+e.bytes,0)/1024).toFixed(1))
+      },
+      processes:procs,
+      recommendations: state.recs.map(r=>({severity:r.sev, title:r.title, detail:r.body})),
+      unsupportedInThisBrowser: Object.keys(supports).filter(k=>!supports[k])
+    };
+    const blob = new Blob([JSON.stringify(report,null,2)], {type:'application/json'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'perf-power-report-'+Date.now()+'.json';
+    document.body.appendChild(a); a.click(); a.remove();
+  };
+
+  /* ============================== RESIZE ============================== */
+  let resizeT;
+  window.addEventListener('resize', ()=>{
+    clearTimeout(resizeT);
+    resizeT = setTimeout(()=>{ renderChannels(); updateGauge('powerGauge','powerVal','powerTag', state.powerHist.length?state.powerHist[state.powerHist.length-1]:0); updateGauge('lagGauge','lagVal','lagTag', state.lagHist.length?state.lagHist[state.lagHist.length-1]:0); }, 150);
+  });
+
+  /* ============================== TARGET FILE (drop-in profiling) ============================== */
+  const dropzone = document.getElementById('dropzone');
+  const targetFileInput = document.getElementById('targetFileInput');
+  const targetFrame = document.getElementById('targetFrame');
+  const frameControls = document.getElementById('frameControls');
+  const frameGrowBtn = document.getElementById('frameGrow');
+  const frameShrinkBtn = document.getElementById('frameShrink');
+  frameGrowBtn.addEventListener('click', ()=>{
+    const h = targetFrame.getBoundingClientRect().height;
+    targetFrame.style.height = Math.min(window.innerHeight*0.8, h+140)+'px';
+  });
+  frameShrinkBtn.addEventListener('click', ()=>{
+    const h = targetFrame.getBoundingClientRect().height;
+    targetFrame.style.height = Math.max(220, h-140)+'px';
+  });
+  const targetStatusEl = document.getElementById('targetStatus');
+  const targetReadoutEl = document.getElementById('targetReadout');
+
+  // Parent-side landing point for calls timed inside the iframe's shim
+  // (see SHIM_SRC below). Same-origin srcdoc means the iframe can reach
+  // window.parent directly, no postMessage needed.
+  window.__reportCall = function(name, ms){
+    if(!state.recording) toggleRecording(true);
+    const proc = getProc('target_'+name, '[target] '+name, 'wrapped');
+    recordCall(proc, ms);
+  };
+  window.__reportTargetError = function(msg, file, line){
+    pushLog('critical', 'Target file error: '+msg+' ('+(file||'inline')+(line?':'+line:'')+')');
+  };
+
+  // Injected as the very first script in the dropped file, before any of
+  // its own code runs. Patches setInterval/setTimeout/requestAnimationFrame
+  // and EventTarget.prototype.addEventListener so any callback handed to
+  // them is timed automatically — no changes needed in the dropped file.
+  // window.__trackFn is also exposed for anything this can't reach (a
+  // plain function that's never passed to one of these APIs). Uncaught
+  // errors in the dropped file are forwarded to the parent's log so a
+  // silent failure there doesn't look like a mystery hang here.
+  const SHIM_SRC = "(function(){"+
+    "window.addEventListener('error', function(ev){ try{ if(window.parent && window.parent.__reportTargetError) window.parent.__reportTargetError(ev.message, ev.filename, ev.lineno); }catch(e){} });"+
+    "function __timed(name, fn){"+
+      "if (typeof fn !== 'function') return fn;"+
+      "var wrapped = function(){"+
+        "var t0 = performance.now();"+
+        "try { return fn.apply(this, arguments); }"+
+        "finally { var dt = performance.now()-t0; try { if (window.parent && window.parent.__reportCall) window.parent.__reportCall(name, dt); } catch(e){} }"+
+      "};"+
+      "return wrapped;"+
+    "}"+
+    "window.__trackFn = __timed;"+
+    "try{ var _si = window.setInterval; window.setInterval = function(fn, delay){ var name='setInterval:'+(fn&&fn.name?fn.name:'anonymous'); var rest=Array.prototype.slice.call(arguments,2); return _si.apply(window,[__timed(name,fn),delay].concat(rest)); }; }catch(e){}"+
+    "try{ var _st = window.setTimeout; window.setTimeout = function(fn, delay){ var name='setTimeout:'+(fn&&fn.name?fn.name:'anonymous'); var rest=Array.prototype.slice.call(arguments,2); return _st.apply(window,[__timed(name,fn),delay].concat(rest)); }; }catch(e){}"+
+    "try{ var _raf = window.requestAnimationFrame; window.requestAnimationFrame = function(fn){ var name='rAF:'+(fn&&fn.name?fn.name:'anonymous'); return _raf.call(window,__timed(name,fn)); }; }catch(e){}"+
+    "try{ var _ael = EventTarget.prototype.addEventListener; EventTarget.prototype.addEventListener = function(type, listener, opts){ if (typeof listener==='function'){ var tag='node'; try{ if(this===window) tag='window'; else if(this===document) tag='document'; else if(this.id) tag='#'+this.id; else if(this.tagName) tag=this.tagName.toLowerCase(); }catch(e){} var name='event:'+type+'@'+tag+(listener.name?(':'+listener.name):''); listener=__timed(name,listener); } return _ael.call(this, type, listener, opts); }; }catch(e){}"+
+  "})();";
+
+  // Parses the dropped file as a real DOM (via DOMParser, which never
+  // executes scripts) and inserts the shim as the first child of <head>,
+  // then reserializes. This avoids the failure mode a text-based/regex
+  // splice has: if the file's own JS contains the literal text "<head" or
+  // "<html" anywhere (a template string, a comment, generated markup), a
+  // regex-based insertion can land in the wrong place and corrupt the
+  // file's syntax, hanging the page with no visible error.
+  // A dropped file only gives us its own text (via FileReader) — never the
+  // folder it lives in. So any reference to a sibling file (a relative
+  // script/img/link/iframe src) can't resolve inside the srcdoc sandbox:
+  // there's no local path for the browser to fetch against. That request
+  // just sits pending forever rather than erroring, which is exactly what
+  // holds the document at readyState "interactive" and blocks "load".
+  // This scans for that pattern so the log names the actual culprit
+  // instead of sending you to devtools blind.
+  function findUnresolvableRefs(doc){
+    const suspects = [];
+    const isLocal = (url)=>{
+      if(!url) return false;
+      return !/^(https?:)?\/\//i.test(url) && !/^data:/i.test(url) && !/^about:/i.test(url) && !/^#/.test(url);
+    };
+    try{
+      doc.querySelectorAll('script[src]').forEach(el=>{ if(isLocal(el.getAttribute('src'))) suspects.push('<script src="'+el.getAttribute('src')+'">'); });
+      doc.querySelectorAll('link[href]').forEach(el=>{ if(isLocal(el.getAttribute('href'))) suspects.push('<link href="'+el.getAttribute('href')+'">'); });
+      doc.querySelectorAll('img[src]').forEach(el=>{ if(isLocal(el.getAttribute('src'))) suspects.push('<img src="'+el.getAttribute('src')+'">'); });
+      doc.querySelectorAll('iframe[src]').forEach(el=>{ if(isLocal(el.getAttribute('src'))) suspects.push('<iframe src="'+el.getAttribute('src')+'">'); });
+      doc.querySelectorAll('source[src],audio[src],video[src]').forEach(el=>{ if(isLocal(el.getAttribute('src'))) suspects.push('<'+el.tagName.toLowerCase()+' src="'+el.getAttribute('src')+'">'); });
+    }catch(e){}
+    return suspects;
+  }
+
+  function injectShim(html){
+    try{
+      const doc = new DOMParser().parseFromString(html, 'text/html');
+      const scriptEl = doc.createElement('script');
+      scriptEl.textContent = SHIM_SRC;
+      const target = doc.head || doc.documentElement;
+      target.insertBefore(scriptEl, target.firstChild);
+      return '<!DOCTYPE html>\n' + doc.documentElement.outerHTML;
+    }catch(e){
+      pushLog('warning', 'Could not parse the dropped file to inject instrumentation ('+e.message+') — loading it unmodified; timers/events won\'t be auto-wrapped, but window.__trackFn still works if you add it yourself.');
+      return html;
+    }
+  }
+
+  // Baseline snapshot of a blank iframe's globals, so once the dropped file
+  // loads we can tell which window properties it added itself (e.g.
+  // top-level `function name(){}` declarations) and auto-wrap those too.
+  let baselineGlobals = null;
+  (function captureBaseline(){
+    const boot = document.createElement('iframe');
+    boot.style.display = 'none';
+    boot.addEventListener('load', ()=>{
+      try{ baselineGlobals = new Set(Object.getOwnPropertyNames(boot.contentWindow)); }
+      catch(e){ baselineGlobals = new Set(); }
+      boot.remove();
+    });
+    document.body.appendChild(boot);
+    boot.srcdoc = '<!DOCTYPE html><html><head></head><body></body></html>';
+  })();
+
+  ['dragenter','dragover'].forEach(evt=>dropzone.addEventListener(evt, e=>{
+    e.preventDefault(); e.stopPropagation(); dropzone.classList.add('dragover');
+  }));
+  ['dragleave','drop'].forEach(evt=>dropzone.addEventListener(evt, e=>{
+    e.preventDefault(); e.stopPropagation(); dropzone.classList.remove('dragover');
+  }));
+  dropzone.addEventListener('drop', e=>{
+    let file = e.dataTransfer.files && e.dataTransfer.files[0];
+    if(!file && e.dataTransfer.items && e.dataTransfer.items.length){
+      const item = e.dataTransfer.items[0];
+      if(item.kind === 'file') file = item.getAsFile();
+    }
+    if(file){ loadTargetFile(file); }
+    else { pushLog('warning', 'Drop detected but no file was found in the drop payload.'); }
+  });
+  dropzone.addEventListener('click', ()=>targetFileInput.click());
+  targetFileInput.addEventListener('change', ()=>{
+    const file = targetFileInput.files[0];
+    if(file) loadTargetFile(file);
+    targetFileInput.value = '';
+  });
+
+  function loadTargetFile(file){
+    if(!/\.html?$/i.test(file.name)){
+      targetStatusEl.textContent = 'Only .html/.htm files are supported (got "'+file.name+'").';
+      pushLog('warning', 'Rejected "'+file.name+'" — not an .html/.htm file.');
+      return;
+    }
+    pushLog('info', 'Reading "'+file.name+'" ('+Math.round(file.size/1024)+' KB)…');
+    const reader = new FileReader();
+    reader.onload = ()=>{
+      targetState.fileName = file.name;
+      targetState.loaded = false;
+      targetState.autoWrappedGlobals = 0;
+      targetState.longTasks = [];
+      targetState.fcp = null; targetState.lcp = null; targetState.cls = 0;
+      targetStatusEl.textContent = 'Loading "'+file.name+'"…';
+      targetReadoutEl.innerHTML = '';
+      // srcdoc keeps the iframe same-origin with this page, so we can reach
+      // into it (contentWindow) once it loads. injectShim() splices our
+      // instrumentation script in before the file's own code runs.
+      targetFrame.srcdoc = injectShim(reader.result);
+      // Fallback: some browsers/edge-cases don't fire 'load' a second time
+      // when srcdoc is reassigned rapidly. Poll readyState as a backstop.
+      let pollTries = 0;
+      let lastReadyState = null;
+      let lastDoc = null;
+      const poll = setInterval(()=>{
+        pollTries++;
+        if(targetState.loaded){ clearInterval(poll); return; }
+        if(pollTries>40){ // ~10s
+          clearInterval(poll);
+          if(lastReadyState === 'interactive' && lastDoc){
+            // DOM parsed and its own scripts already ran — only a
+            // sub-resource (image/script/stylesheet/iframe) is still
+            // pending. That shouldn't block you from using/measuring the
+            // page, so proceed rather than hang indefinitely.
+            const suspects = findUnresolvableRefs(lastDoc);
+            if(suspects.length){
+              pushLog('warning', '"'+file.name+'" never reached readyState "complete" — likely because it references a local file this tool can\'t see (only the dropped file\'s own text is available, not its folder): '+suspects.slice(0,4).join(', ')+(suspects.length>4?', +'+(suspects.length-4)+' more':'')+'. Proceeding anyway since the page itself finished parsing and running.');
+            } else {
+              pushLog('warning', '"'+file.name+'" never reached readyState "complete" (stuck at "interactive") — some sub-resource is still pending, but no obvious local/relative reference was found. Proceeding anyway since the page itself finished parsing and running; check the Network tab in devtools (iframe context) if you want to find the pending request.');
+            }
+            targetFrame.dispatchEvent(new Event('load'));
+          } else {
+            pushLog('warning', '"'+file.name+'" did not report a load event (last readyState: '+(lastReadyState||'unknown, contentDocument inaccessible')+'). Check the browser devtools console with the iframe context selected for errors in that file.');
+          }
+          return;
+        }
+        try{
+          const doc = targetFrame.contentDocument;
+          lastReadyState = doc ? doc.readyState : null;
+          lastDoc = doc || lastDoc;
+          if(doc && doc.readyState === 'complete' && !targetState.loaded){
+            targetFrame.dispatchEvent(new Event('load'));
+          }
+        }catch(e){
+          lastReadyState = 'blocked: '+e.message;
+        }
+      }, 250);
+    };
+    reader.onerror = ()=>{
+      targetStatusEl.textContent = 'Could not read that file.';
+      pushLog('critical', 'FileReader failed on "'+file.name+'": '+(reader.error && reader.error.message||'unknown error'));
+    };
+    reader.readAsText(file);
+  }
+
+  targetFrame.addEventListener('load', ()=>{
+    if(!targetState.fileName) return; // ignore the iframe's initial blank load
+    let win;
+    try{ win = targetFrame.contentWindow; }
+    catch(e){ targetStatusEl.textContent = 'Could not access the dropped file (blocked as cross-origin).'; return; }
+
+    targetState.loaded = true;
+    targetFrame.classList.add('is-active');
+    frameControls.hidden = false;
+    pushLog('info', 'Target file "'+targetState.fileName+'" loaded — timers, animation frames, and event listeners are now auto-instrumented. Use the page below as normal; interactions are what get measured.');
+
+    // Secondary pass: wrap any top-level function the file exposed directly
+    // on window (plain `function name(){}` declarations), so direct calls
+    // to those get measured too, not just timer/event-routed ones.
+    if(baselineGlobals){
+      try{
+        Object.getOwnPropertyNames(win).forEach(key=>{
+          if(baselineGlobals.has(key)) return;
+          if(key.indexOf('__')===0) return;
+          let val;
+          try{ val = win[key]; }catch(e){ return; }
+          if(typeof val !== 'function') return;
+          try{ if(/\[native code\]/.test(Function.prototype.toString.call(val))) return; }catch(e){}
+          try{
+            const proc = getProc('target_'+key, '[target] '+key, 'wrapped');
+            win[key] = function(...args){
+              const t0 = now();
+              try{ return val.apply(this, args); }
+              finally{ recordCall(proc, now()-t0); }
+            };
+            targetState.autoWrappedGlobals++;
+          }catch(e){}
+        });
+      }catch(e){}
+    } else {
+      pushLog('info', 'Baseline globals were not ready in time — global function auto-wrap skipped this load, but timers/events/animation frames are still covered.');
+    }
+
+    targetStatusEl.innerHTML = '<code>'+targetState.fileName+'</code> loaded — '+targetState.autoWrappedGlobals+' top-level function(s) auto-wrapped, plus every setInterval/setTimeout/requestAnimationFrame callback and DOM event listener is timed automatically. Results appear in the process bench below as "[target] name". Anything not reachable that way (a plain helper never exposed globally or passed to those APIs) can still be measured by wrapping it yourself with <code>window.__trackFn(name, fn)</code>.';
+
+    // Passive metrics for the target document itself (no cooperation needed).
+    try{
+      if('PerformanceObserver' in win){
+        try{
+          const po = new win.PerformanceObserver(list=>{
+            list.getEntries().forEach(e=>targetState.longTasks.push({t:e.startTime, duration:e.duration}));
+            renderTargetReadout();
+          });
+          po.observe({type:'longtask', buffered:true});
+        }catch(e){}
+        try{
+          const poPaint = new win.PerformanceObserver(list=>{
+            list.getEntries().forEach(e=>{ if(e.name==='first-contentful-paint') targetState.fcp = e.startTime; });
+            renderTargetReadout();
+          });
+          poPaint.observe({type:'paint', buffered:true});
+        }catch(e){}
+        try{
+          const poLcp = new win.PerformanceObserver(list=>{
+            const entries = list.getEntries();
+            if(entries.length) targetState.lcp = entries[entries.length-1].startTime;
+            renderTargetReadout();
+          });
+          poLcp.observe({type:'largest-contentful-paint', buffered:true});
+        }catch(e){}
+        try{
+          const poCls = new win.PerformanceObserver(list=>{
+            list.getEntries().forEach(e=>{ if(!e.hadRecentInput) targetState.cls += e.value; });
+            renderTargetReadout();
+          });
+          poCls.observe({type:'layout-shift', buffered:true});
+        }catch(e){}
+      }
+    }catch(e){}
+
+    renderTargetReadout();
+    renderBench(); renderPresets();
+  });
+
+  function renderTargetReadout(){
+    if(!targetState.loaded){ targetReadoutEl.innerHTML=''; return; }
+    const tbt = targetState.longTasks.reduce((s,t)=>s+Math.max(0,t.duration-50),0);
+    const measured = Array.from(state.processes.keys()).filter(k=>k.indexOf('target_')===0).length;
+    const items = [
+      {l:'First paint', v: targetState.fcp? fmt(targetState.fcp,0)+' <small>ms</small>' : '—'},
+      {l:'Largest paint', v: targetState.lcp? fmt(targetState.lcp,0)+' <small>ms</small>' : '—'},
+      {l:'Long tasks', v: targetState.longTasks.length},
+      {l:'Blocking time', v: fmt(tbt,0)+' <small>ms</small>'},
+      {l:'Layout shift', v: fmt(targetState.cls,3)},
+      {l:'Functions measured', v: measured}
+    ];
+    targetReadoutEl.innerHTML = '<div class="readout-row">'+items.map(it=>
+      '<div class="readout"><div class="rl">'+it.l+'</div><div class="rv">'+it.v+'</div></div>'
+    ).join('')+'</div>';
+  }
+
+  /* ============================== INIT ============================== */
+  renderPresets();
+  renderBench();
+  renderLog();
+  renderRecs();
+  renderReadouts(60,0);
+  renderChannels();
+  updateGauge('powerGauge','powerVal','powerTag',0);
+  updateGauge('lagGauge','lagVal','lagTag',0);
+
+})();
+</script>
+</body>
+</html>
