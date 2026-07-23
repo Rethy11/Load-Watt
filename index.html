@@ -1702,6 +1702,10 @@
     "window.addEventListener('error', function(ev){ try{ if(window.parent && window.parent.__reportTargetError) window.parent.__reportTargetError(ev.message, ev.filename, ev.lineno); }catch(e){} });"+
     "function __timed(name, fn){"+
       "if (typeof fn !== 'function') return fn;"+
+      "if (fn.__lwWrapped) return fn;"+ // already an instrumented wrapper (e.g. handed back in via a
+                                          // self-referencing global) -- reuse it instead of wrapping the
+                                          // wrapper, which would report as 'anonymous' with the wrapper's
+                                          // own source instead of the original function's.
       "var sentCode = false;"+
       "var wrapped = function(){"+
         "var t0 = performance.now();"+
@@ -1713,6 +1717,8 @@
           "try { if (window.parent && window.parent.__reportCall) window.parent.__reportCall(name, dt, src); } catch(e){}"+
         "}"+
       "};"+
+      "wrapped.__lwWrapped = true;"+
+      "wrapped.__lwOrig = fn;"+
       "return wrapped;"+
     "}"+
     "window.__trackFn = __timed;"+
@@ -2135,16 +2141,22 @@
           let val;
           try{ val = win[key]; }catch(e){ return; }
           if(typeof val !== 'function') return;
+          if(val.__lwWrapped) return; // already instrumented (by this pass on a prior load, or by
+                                       // the shim) -- wrapping it again would report under this
+                                       // wrapper's own anonymous source instead of the real function.
           try{ if(/\[native code\]/.test(Function.prototype.toString.call(val))) return; }catch(e){}
           try{
             let src = null;
             try{ src = Function.prototype.toString.call(val); }catch(e){}
             const proc = getProc('target_'+key, '[target] '+key, 'wrapped', {code: src, purpose: src ? inferPurpose(src) : null});
-            win[key] = function(...args){
+            const trackedWrapper = function(...args){
               const t0 = now();
               try{ return val.apply(this, args); }
               finally{ recordCall(proc, now()-t0); }
             };
+            trackedWrapper.__lwWrapped = true;
+            trackedWrapper.__lwOrig = val;
+            win[key] = trackedWrapper;
             targetState.autoWrappedGlobals++;
           }catch(e){}
         });
