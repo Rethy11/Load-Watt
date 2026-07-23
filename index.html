@@ -328,6 +328,14 @@
   .impact.med{background:rgba(255,180,84,.12); color:var(--amber);}
   .impact.high{background:rgba(255,180,84,.18); color:var(--amber);}
   .impact.crit{background:rgba(255,92,92,.15); color:var(--red);}
+  tr.drop-suspect td.name{box-shadow:inset 2px 0 0 var(--red);}
+  .drop-flag{
+    display:inline-flex; align-items:center; gap:4px; margin-left:7px;
+    padding:1px 6px 1px 5px; border-radius:9px; font-size:9.5px; letter-spacing:.02em;
+    background:rgba(255,92,92,.14); color:var(--red); white-space:nowrap; cursor:help;
+    vertical-align:middle; font-family:var(--font-m); text-transform:none;
+  }
+  .drop-flag::before{content:'▲'; font-size:7px; transform:translateY(-1px);}
   .empty-row td{color:var(--text-faint); text-align:center; padding:16px 8px; font-style:italic;}
 
   details.advanced{margin-top:12px; border-top:1px dashed var(--line); padding-top:10px;}
@@ -587,7 +595,9 @@
     idleHist:[],           // 0-100 "% of frame budget spent idle" from requestIdleCallback sampling
     processes:new Map(),   // name -> {calls,totalMs,maxMs,running,mode,stop,impact}
     log:[],
-    recs:[]
+    recs:[],
+    dropSpikeWindows:0,     // how many trailing-window checks saw an elevated/critical drop rate
+    flaggedProcs:new Set()  // ids already announced as drop-spike suspects (avoids re-logging every tick)
   };
 
   const targetState = {
@@ -1031,7 +1041,13 @@
 
   function getProc(id, name, mode, extra){
     if(!state.processes.has(id)){
-      state.processes.set(id, {id, name, mode, calls:0, totalMs:0, maxMs:0, running:false});
+      state.processes.set(id, {
+        id, name, mode, calls:0, totalMs:0, maxMs:0, running:false,
+        callLog:[],           // rolling {t, ms} of recent calls, used only for drop-spike correlation
+        dropCorrelationMs:0,  // cumulative busy-ms this proc contributed during a detected drop spike
+        dropSpikeHits:0,      // number of distinct spike windows this proc was implicated in
+        flaggedForDrops:false
+      });
     }
     const proc = state.processes.get(id);
     if(extra && !proc.code){
@@ -1068,10 +1084,49 @@
     return 'Likely ' + signals.join('; ') + '.';
   }
 
+  const DROP_CORR_WINDOW_MS = 2000; // must match the trailing window tick() uses for dropPctNow
   function recordCall(proc, ms){
     proc.calls++;
     proc.totalMs += ms;
     if(ms>proc.maxMs) proc.maxMs = ms;
+    // Keep a short rolling log of when this process actually did work, so a
+    // drop-frame spike can be matched back against who was busy at the time.
+    // Trimmed to DROP_CORR_WINDOW_MS -- this is a correlation aid, not a
+    // full history, so it stays cheap even for high-frequency callbacks.
+    if(!proc.callLog) proc.callLog = [];
+    const t = now();
+    proc.callLog.push({t, ms});
+    const cutoff = t - DROP_CORR_WINDOW_MS;
+    while(proc.callLog.length && proc.callLog[0].t < cutoff) proc.callLog.shift();
+  }
+
+  // A drop-frame "spike" here means the same trailing-window rate the
+  // Dropped frames readout/rec already treat as critical (see
+  // evaluateRecommendations' dropPctRecent>8 branch), but checked every
+  // tick (500ms) instead of every 5s so a short-lived spike isn't missed.
+  const DROP_SPIKE_PCT = 8;       // % of frames dropped/sec to count as a spike
+  const DROP_SPIKE_MIN_FRAMES = 3; // need a few real frame samples before trusting the rate
+  const DROP_SUSPECT_MIN_MS = 8;   // ignore negligible/presence-only activity (e.g. 0ms heartbeat ticks)
+  const DROP_SUSPECT_HITS = 2;     // require correlation across >1 spike window before flagging (cuts down false positives)
+  const DROP_SUSPECT_MIN_TOTAL_MS = 25;
+  function correlateDropSpike(dropPct, framesInWindow){
+    if(framesInWindow<DROP_SPIKE_MIN_FRAMES || dropPct<DROP_SPIKE_PCT) return;
+    state.dropSpikeWindows++;
+    const windowStart = now()-DROP_CORR_WINDOW_MS;
+    state.processes.forEach(proc=>{
+      if(!proc.callLog || !proc.callLog.length) return;
+      const busyMs = proc.callLog.reduce((s,c)=> c.t>=windowStart ? s+c.ms : s, 0);
+      if(busyMs<DROP_SUSPECT_MIN_MS) return; // was "active" but not actually doing meaningful work
+      proc.dropCorrelationMs += busyMs;
+      proc.dropSpikeHits++;
+      if(!proc.flaggedForDrops && proc.dropSpikeHits>=DROP_SUSPECT_HITS && proc.dropCorrelationMs>=DROP_SUSPECT_MIN_TOTAL_MS){
+        proc.flaggedForDrops = true;
+        if(!state.flaggedProcs.has(proc.id)){
+          state.flaggedProcs.add(proc.id);
+          pushLog('warning', '"'+proc.name+'" flagged as a dropped-frame suspect — busy for ~'+fmt(proc.dropCorrelationMs,0)+'ms across '+proc.dropSpikeHits+' spike window(s) so far.');
+        }
+      }
+    });
   }
 
   function presetExtra(def){
@@ -1164,12 +1219,15 @@
         ? '<div class="name-meta"><div class="meta-label">Purpose</div><div class="name-purpose">'+escapeHtml(p.purpose||inferPurpose(p.code)||'—')+'</div>'+
           '<div class="meta-label">Code</div><pre class="name-code">'+escapeHtml(p.code)+'</pre></div>'
         : '<div class="name-meta meta-hint">Code not captured for this process yet — it may be a native/anonymous callback, or hasn\'t fired since load.</div>';
-      rows += '<tr>'+
+      const dropFlag = p.flaggedForDrops
+        ? '<span class="drop-flag" title="Busy ~'+fmt(p.dropCorrelationMs,0)+'ms of main-thread time inside '+p.dropSpikeHits+' dropped-frame spike window(s) this session — a likely contributor, not a proven sole cause.">drop suspect</span>'
+        : '';
+      rows += '<tr'+(p.flaggedForDrops?' class="drop-suspect"':'')+'>'+
         '<td class="name"><span class="dot '+(p.running?'run':'')+'"></span>'+
           '<details class="name-details" data-pid="'+p.id+'"'+(state.expandedNames.has(p.id)?' open':'')+'><summary class="name-summary" title="'+escapeHtml(p.name)+'">'+escapeHtml(p.name)+'</summary>'+
           '<div class="name-full">'+escapeHtml(p.name)+'</div>'+
           codeBlock+
-          '</details></td>'+
+          '</details>'+dropFlag+'</td>'+
         '<td>'+p.calls+'</td>'+
         '<td>'+fmt(p.totalMs,0)+'</td>'+
         '<td>'+fmt(p.calls?p.totalMs/p.calls:0,2)+'</td>'+
@@ -1317,6 +1375,14 @@
       }
     });
 
+    const dropSuspects = Array.from(state.processes.values())
+      .filter(p=>p.flaggedForDrops)
+      .sort((a,b)=>b.dropCorrelationMs-a.dropCorrelationMs);
+    if(dropSuspects.length){
+      const names = dropSuspects.slice(0,3).map(p=>'"'+p.name+'"').join(', ')+(dropSuspects.length>3?', +'+(dropSuspects.length-3)+' more':'');
+      pushRec('drop-suspects','critical', dropSuspects.length+' function(s) flagged for dropped frames', 'These were consistently doing main-thread work in the moments frames were dropped: '+names+'. Flagged rows are marked "drop suspect" in the process bench below — start by profiling/throttling the top one. This is a timing correlation, not proof of sole causation.');
+    }
+
     if(state.battery.supported && state.battery.samples.length>4 && state.battery.charging===false){
       const s = state.battery.samples;
       const dt = (s[s.length-1].t - s[0].t)/60000;
@@ -1406,6 +1472,7 @@
     const dropPctNow = dTotal>0 ? clamp((dDropped/dTotal)*100,0,100) : 0;
     state.dropPctHist.push(dropPctNow); if(state.dropPctHist.length>60) state.dropPctHist.shift();
     const dropNorm = dropPctNow; // already 0-100, i.e. % of frames dropped/sec
+    correlateDropSpike(dropPctNow, dTotal);
 
     const animNorm = clamp((animCount/8)*100,0,100);
     // Prefer the real LoAF render-time signal where the browser exposes it;
@@ -1569,6 +1636,7 @@
       targetState._recentDt=[];
     }
     state.processes=new Map(); state.log=[]; state.recs=[];
+    state.dropSpikeWindows=0; state.flaggedProcs=new Set();
     const led=document.getElementById('recLed'); led.classList.remove('on','rec-pulse');
     const btn=document.getElementById('recBtn'); btn.textContent='Start recording'; btn.classList.add('primary'); btn.classList.remove('stop');
     document.getElementById('sessionClock').textContent='00:00';
@@ -1598,6 +1666,11 @@
         impact:impactOf(share),
         running:p.running
       };
+      if(p.flaggedForDrops){
+        out.dropSuspect = true;
+        out.dropCorrelationMs = Math.round(p.dropCorrelationMs);
+        out.dropSpikeHits = p.dropSpikeHits;
+      }
       if(isNotable(p, share) && p.code){
         out.code = p.code;
         out.purpose = p.purpose || inferPurpose(p.code);
@@ -1639,7 +1712,9 @@
           : (supports.memory && state.ch.ch4.length? +state.ch.ch4[state.ch.ch4.length-1].toFixed(1) : null),
         networkTotalKB:+(((targetState.loaded ? targetState.netEntries : state.netEntries).reduce((s,e)=>s+e.bytes,0)/1024).toFixed(1)),
         avgDroppedFramePct:+((avg(state.dropPctHist)||0).toFixed(2)),
-        peakDroppedFramePct:+((state.dropPctHist.length?Math.max(...state.dropPctHist):0).toFixed(2))
+        peakDroppedFramePct:+((state.dropPctHist.length?Math.max(...state.dropPctHist):0).toFixed(2)),
+        dropSpikeWindows:state.dropSpikeWindows,
+        dropSuspectFunctions:Array.from(state.processes.values()).filter(p=>p.flaggedForDrops).length
       },
       measuredOn: targetState.loaded ? ('target file: '+targetState.fileName) : 'this profiler page itself (no target file was loaded)',
       processes:procs,
